@@ -1,7 +1,8 @@
 # HeavyWater Preview
 
 Local Python pipeline for:
-- clipping nearby EuHydro water bodies for a `lat, lon` AOI
+- fetching nearby rivers and waterways from the OpenStreetMap Overpass API for a `lat, lon` AOI
+- optionally clipping nearby EuHydro water bodies if you already have the local datasets
 - extracting community polygons from a Copernicus imperviousness or built-up GeoTIFF
 - fetching Copernicus GLO-30 terrain for the AOI through the Copernicus Data Space Sentinel Hub Process API
 - estimating river width from Sentinel-1 and Sentinel-2 water masks
@@ -13,19 +14,21 @@ Local Python pipeline for:
 
 - `extract_water_preview.py`: thin CLI entry point
 - `heavywater_preview/`: package source code
-- `data/euhydro/`: optional local location for EuHydro `.gpkg` files
+- `data/euhydro/`: optional local location for EuHydro `.gpkg` files if you want to use that source
 - `output/`: generated HTML, QGIS, raster, and GeoPackage outputs
 
-## Data Resolution
+## Water Data
 
-EuHydro is resolved in this order:
+By default, HeavyWater fetches water features from the OpenStreetMap Overpass API, so it does not require any local EuHydro files.
+
+If you want to use EuHydro instead, it is resolved in this order:
 1. `data/euhydro`
 2. `C:\Projects\EuHydro\rivers_final`
 
+Use `--water-source euhydro` only if those datasets exist locally.
+
 Communities are read from a Copernicus imperviousness or built-up GeoTIFF passed with `--communities-raster`.
 If no raster is passed, the map is still generated with an empty `Communities` layer.
-
-If you want this project to be fully self-contained, copy your EuHydro `.gpkg` files into `data/euhydro`.
 
 ## Install
 
@@ -42,6 +45,18 @@ python .\extract_water_preview.py 46.66 23.69
 ```
 
 This writes outputs into `output\` and prints the path to `output\map_preview.html`.
+
+To explicitly use the Overpass API:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --water-source overpass
+```
+
+To use local EuHydro data instead:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --water-source euhydro
+```
 
 To use the Copernicus Impervious Built-Up or Imperviousness Density GeoTIFF:
 

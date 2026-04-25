@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import folium
+from folium.plugins import MeasureControl, MousePosition
 import numpy as np
 import rasterio
 from rasterio.vrt import WarpedVRT
@@ -24,10 +25,20 @@ def write_preview_map(
     canal_paths=None,
     feasibility_sites=None,
 ) -> None:
-    fmap = folium.Map(location=[lat, lon], zoom_start=12, tiles="OpenStreetMap")
+    fmap = folium.Map(location=[lat, lon], zoom_start=12, tiles=None)
+
+    # Basemaps
+    folium.TileLayer("OpenStreetMap", name="Street Map").add_to(fmap)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri",
+        name="Satellite (Esri)",
+        overlay=False,
+        control=True
+    ).add_to(fmap)
 
     if terrain_dem_raster is not None and terrain_hillshade_raster is not None:
-        terrain_group = folium.FeatureGroup(name="Terrain", show=True)
+        terrain_group = folium.FeatureGroup(name="Terrain Overlay", show=True)
         overlay_image, overlay_bounds = build_terrain_overlay(terrain_dem_raster, terrain_hillshade_raster)
         folium.raster_layers.ImageOverlay(
             image=overlay_image,
@@ -42,17 +53,28 @@ def write_preview_map(
         folium.GeoJson(
             data=json.loads(communities.to_crs("EPSG:4326").to_json(default=str)),
             style_function=lambda _: {"color": "#8f1d14", "fillColor": "#d7301f", "weight": 1, "fillOpacity": 0.65, "opacity": 0.95},
-            tooltip=folium.GeoJsonTooltip(fields=["area_m2"], aliases=["Area m2"], localize=True),
+            tooltip=folium.GeoJsonTooltip(
+                fields=["area_m2"],
+                aliases=["Area (m²)"],
+                localize=True,
+                sticky=True
+            ),
         ).add_to(community_group)
     community_group.add_to(fmap)
 
-    rivers_group = folium.FeatureGroup(name="Rivers", show=True)
+    rivers_group = folium.FeatureGroup(name="Rivers & Waterways", show=True)
     if not water_lines.empty:
+        # Determine available fields for tooltip
         river_popup_fields, river_popup_aliases = _river_popup_fields(water_lines)
+        
+        tooltip = None
+        if river_popup_fields:
+            tooltip = folium.GeoJsonTooltip(fields=river_popup_fields, aliases=river_popup_aliases, sticky=True)
+
         folium.GeoJson(
             data=json.loads(_format_river_properties(water_lines).to_crs("EPSG:4326").to_json(default=str)),
             style_function=lambda _: {"color": "#0057ff", "weight": 4, "opacity": 0.95},
-            popup=folium.GeoJsonPopup(fields=river_popup_fields, aliases=river_popup_aliases, localize=True, labels=True),
+            tooltip=tooltip
         ).add_to(rivers_group)
     rivers_group.add_to(fmap)
 
@@ -113,7 +135,13 @@ def write_preview_map(
         site_group.add_to(fmap)
 
     fmap.fit_bounds([[bbox_wgs84[1], bbox_wgs84[0]], [bbox_wgs84[3], bbox_wgs84[2]]])
+    
+    # UI Controls
     folium.LayerControl(collapsed=False).add_to(fmap)
+    folium.ScaleControl(position="bottomleft").add_to(fmap)
+    MeasureControl(position="topleft", primary_length_unit="kilometers", secondary_length_unit="meters").add_to(fmap)
+    MousePosition(position="bottomright", separator=" | ", prefix="Coords: ").add_to(fmap)
+
     if terrain_query_data is not None:
         fmap.get_root().script.add_child(
             folium.Element(_terrain_click_script(fmap.get_name(), terrain_query_data))
@@ -486,6 +514,15 @@ def _river_popup_fields(water_lines) -> tuple[list[str], list[str]]:
         if water_lines[field].notna().any() or field in {"observed_width_m", "quantity_score"}:
             fields.append(field)
             aliases.append(alias)
+    
+    # Add basic attributes if available
+    if "name" in water_lines.columns and "name" not in fields:
+        fields.insert(0, "name")
+        aliases.insert(0, "Name")
+    if "source_layer" in water_lines.columns and "source_layer" not in fields:
+        fields.append("source_layer")
+        aliases.append("Type")
+        
     return fields, aliases
 
 
