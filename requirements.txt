@@ -1,0 +1,12 @@
+folium
+fiona
+geopandas
+numpy
+pandas
+planetary-computer
+pyproj
+pystac
+pystac-client
+rasterio
+scipy
+shapely
