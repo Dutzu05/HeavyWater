@@ -49,21 +49,43 @@ def write_preview_map(
 
     community_group = folium.FeatureGroup(name="Communities", show=True)
     if not communities.empty:
-        community_tooltip_fields = [field for field in ("area_m2", "block_area_m2", "member_count") if field in communities.columns]
+        formatted_communities = _format_community_properties(communities)
+        community_tooltip_fields = [
+            field
+            for field in (
+                "water_risk",
+                "demand_m3_day",
+                "distance_to_source_m",
+                "supply_m3_day",
+                "area_m2",
+                "block_area_m2",
+                "member_count",
+                "risk_reason",
+            )
+            if field in formatted_communities.columns
+        ]
         community_tooltip_aliases = {
+            "water_risk": "Risk",
+            "demand_m3_day": "Water needed (m3/day)",
+            "distance_to_source_m": "Distance to water (m)",
+            "supply_m3_day": "Available water (m3/day)",
             "area_m2": "Built-up area (m2)",
             "block_area_m2": "Block area (m2)",
             "member_count": "Merged tiles",
+            "risk_reason": "Reason",
         }
-        folium.GeoJson(
-            data=json.loads(communities.to_crs("EPSG:4326").to_json(default=str)),
-            style_function=lambda _: {"color": "#8f1d14", "fillColor": "#d7301f", "weight": 1, "fillOpacity": 0.65, "opacity": 0.95},
-            tooltip=folium.GeoJsonTooltip(
+        tooltip = None
+        if community_tooltip_fields:
+            tooltip = folium.GeoJsonTooltip(
                 fields=community_tooltip_fields,
                 aliases=[community_tooltip_aliases[field] for field in community_tooltip_fields],
                 localize=True,
                 sticky=True,
-            ),
+            )
+        folium.GeoJson(
+            data=json.loads(formatted_communities.to_crs("EPSG:4326").to_json(default=str)),
+            style_function=_community_style,
+            tooltip=tooltip,
         ).add_to(community_group)
     community_group.add_to(fmap)
 
@@ -80,6 +102,8 @@ def write_preview_map(
     if water_risk_points is not None and not water_risk_points.empty:
         risk_group = folium.FeatureGroup(name="Water Stress", show=True)
         for _, row in _format_risk_properties(water_risk_points).to_crs("EPSG:4326").iterrows():
+            if row.geometry.geom_type != "Point":
+                continue
             style = _risk_style(row.get("water_risk"))
             popup_html = (
                 "<strong>Water Stress</strong><br>"
@@ -458,6 +482,16 @@ def _format_risk_properties(risk_points):
     return enriched
 
 
+def _format_community_properties(communities):
+    enriched = communities.copy()
+    for column in ("distance_to_source_m", "demand_m3_day", "supply_m3_day", "area_m2", "block_area_m2", "cluster_pixels"):
+        if column in enriched.columns:
+            enriched[column] = enriched[column].map(_format_generic)
+    if "member_count" in enriched.columns:
+        enriched["member_count"] = enriched["member_count"].map(_format_integer)
+    return enriched
+
+
 def _format_feasibility_properties(features):
     enriched = features.copy()
     for column in ("distance_to_source_m", "gravity_feasibility_pct", "ksat_mm_per_hour"):
@@ -474,6 +508,17 @@ def _risk_style(risk_status: str | None) -> dict:
     }
     color = color_map.get(risk_status or "", "#7f7f7f")
     return {"color": color, "fillColor": color, "weight": 2, "fillOpacity": 0.85, "opacity": 0.95}
+
+
+def _community_style(feature: dict) -> dict:
+    properties = feature.get("properties") or {}
+    risk_status = properties.get("water_risk")
+    if risk_status:
+        style = _risk_style(risk_status)
+        style["weight"] = 1
+        style["fillOpacity"] = 0.62
+        return style
+    return {"color": "#8f1d14", "fillColor": "#d7301f", "weight": 1, "fillOpacity": 0.65, "opacity": 0.95}
 
 
 def _site_style(stability_status: str | None) -> dict:
@@ -542,6 +587,12 @@ def _format_score(value):
 
 def _format_generic(value):
     return _format_numeric(value, decimals=2)
+
+
+def _format_integer(value):
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return f"{int(round(float(value)))}"
 
 
 def _format_discharge(value):

@@ -204,6 +204,11 @@ def run_pipeline(
 
     map_html_path = output_dir / MAP_HTML_NAME
     index_html_path = output_dir / INDEX_HTML_NAME
+    map_communities = communities
+    map_water_risk_points = water_risk_result.risk_points if water_risk_result else None
+    if water_risk_result and water_risk_mode == "community":
+        map_communities = water_risk_result.risk_points
+        map_water_risk_points = None
     write_preview_map(
         html_path=map_html_path,
         index_path=index_html_path,
@@ -211,11 +216,11 @@ def run_pipeline(
         lon=lon,
         bbox_wgs84=bbox_wgs84,
         water_lines=water_lines,
-        communities=communities,
+        communities=map_communities,
         terrain_dem_raster=terrain_result.dem_raster_path if terrain_result else None,
         terrain_hillshade_raster=terrain_result.hillshade_raster_path if terrain_result else None,
         terrain_query_data=terrain_result.query_data if terrain_result else None,
-        water_risk_points=water_risk_result.risk_points if water_risk_result else None,
+        water_risk_points=map_water_risk_points,
         canal_paths=water_risk_result.canals if water_risk_result else None,
         feasibility_sites=water_risk_result.sites if water_risk_result else None,
     )

@@ -193,18 +193,29 @@ def _build_demand_points(
             crs=EUHYDRO_CRS,
         )
 
+    community_columns = [
+        "demand_id",
+        "mode",
+        "demand_population_proxy",
+        "demand_m3_day",
+        "cluster_pixels",
+        "area_m2",
+        "block_area_m2",
+        "member_count",
+        "geometry",
+    ]
     if communities.empty:
-        return gpd.GeoDataFrame(columns=["demand_id", "mode", "demand_population_proxy", "demand_m3_day", "cluster_pixels", "geometry"], geometry="geometry", crs=EUHYDRO_CRS)
+        return gpd.GeoDataFrame(columns=community_columns, geometry="geometry", crs=EUHYDRO_CRS)
 
     clusters = communities.to_crs(EUHYDRO_CRS).copy()
     clusters["cluster_pixels"] = np.maximum(np.round(clusters["area_m2"].astype(float) / cluster_pixel_area_m2), 1.0)
     clusters["demand_population_proxy"] = clusters["cluster_pixels"] * people_per_cluster_pixel
     clusters["demand_m3_day"] = (clusters["demand_population_proxy"] / 1000.0) * 50.0
     clusters["demand_id"] = [f"community_{index}" for index in range(len(clusters))]
-    centroids = clusters.geometry.centroid
-    result = clusters[["demand_id", "demand_population_proxy", "demand_m3_day", "cluster_pixels"]].copy()
+    keep_columns = [column for column in community_columns if column in clusters.columns and column != "geometry"]
+    result = clusters[keep_columns].copy()
     result["mode"] = "community"
-    return gpd.GeoDataFrame(result, geometry=centroids, crs=EUHYDRO_CRS)
+    return gpd.GeoDataFrame(result, geometry=clusters.geometry, crs=EUHYDRO_CRS)
 
 
 def _attach_supply_metrics(demand_points: gpd.GeoDataFrame, water_sources: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -231,7 +242,7 @@ def _attach_supply_metrics(demand_points: gpd.GeoDataFrame, water_sources: gpd.G
         result.at[idx, "nearest_source_id"] = nearest["source_id"]
         result.at[idx, "nearest_source_type"] = nearest["source_kind"]
         result.at[idx, "distance_to_source_m"] = float(distances.loc[nearest_idx])
-        source_point, _ = nearest_points(row.geometry, nearest.geometry)
+        _, source_point = nearest_points(row.geometry, nearest.geometry)
         result.at[idx, "supply_sample_x"] = source_point.x
         result.at[idx, "supply_sample_y"] = source_point.y
     return result
@@ -241,6 +252,9 @@ def _fetch_glofas_discharge_grid(cache_path: Path, bbox_wgs84: tuple[float, floa
     import cdsapi
 
     target_date = date.today() - timedelta(days=max(days_back, 2))
+    if cache_path.exists():
+        return _read_glofas_discharge_grid(cache_path, date_label="cached")
+
     north = min(90.0, bbox_wgs84[3] + 0.25)
     west = max(-180.0, bbox_wgs84[0] - 0.25)
     south = max(-90.0, bbox_wgs84[1] - 0.25)
@@ -261,6 +275,10 @@ def _fetch_glofas_discharge_grid(cache_path: Path, bbox_wgs84: tuple[float, floa
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     client = _build_ewds_client(cdsapi)
     client.retrieve("cems-glofas-forecast", request).download(str(cache_path))
+    return _read_glofas_discharge_grid(cache_path, date_label=target_date.isoformat())
+
+
+def _read_glofas_discharge_grid(cache_path: Path, date_label: str):
     with Dataset(cache_path) as ds:
         lat_name = _first_present(ds.variables, ("latitude", "lat"))
         lon_name = _first_present(ds.variables, ("longitude", "lon"))
@@ -271,7 +289,7 @@ def _fetch_glofas_discharge_grid(cache_path: Path, bbox_wgs84: tuple[float, floa
         fill_value = getattr(ds.variables[var_name], "_FillValue", None)
         if fill_value is not None:
             discharge = np.where(discharge == fill_value, np.nan, discharge)
-    return {"lats": lats, "lons": lons, "discharge": discharge, "date": target_date.isoformat()}
+    return {"lats": lats, "lons": lons, "discharge": discharge, "date": date_label}
 
 
 def _attach_glofas_supply(risk_points: gpd.GeoDataFrame, discharge_grid: dict) -> gpd.GeoDataFrame:
@@ -360,7 +378,7 @@ def _build_feasibility_outputs(
                 if pd.isna(demand.get("supply_sample_x")) or pd.isna(demand.get("supply_sample_y")):
                     continue
                 supply_point = Point(float(demand["supply_sample_x"]), float(demand["supply_sample_y"]))
-                demand_point = demand.geometry
+                demand_point = _analysis_point(demand.geometry)
                 canal_line, gravity_pct = _least_cost_canal_path(dem, transform, supply_point, demand_point)
                 if canal_line is not None:
                     canal_features.append(
@@ -440,6 +458,13 @@ def _nearest_basin_candidate(demand_point: Point, candidates: list[Point]) -> Po
     if not candidates:
         return None
     return min(candidates, key=lambda point: demand_point.distance(point))
+
+
+def _analysis_point(geometry) -> Point:
+    if geometry.geom_type == "Point":
+        return geometry
+    point = geometry.representative_point()
+    return Point(float(point.x), float(point.y))
 
 
 def _least_cost_canal_path(dem: np.ndarray, transform, source_point: Point, target_point: Point) -> tuple[LineString | None, float | None]:
