@@ -6,6 +6,7 @@ Local Python pipeline for:
 - fetching Copernicus GLO-30 terrain for the AOI through the Copernicus Data Space Sentinel Hub Process API
 - estimating river width from Sentinel-1 and Sentinel-2 water masks
 - attaching EFAS discharge and daily flow volume to rivers
+- evaluating EGMS L3 Ortho Vertical ground-motion stability for a reservoir site and canal route
 - generating a Folium preview map and a basic QGIS project
 
 ## Project Layout
@@ -95,3 +96,22 @@ This may take significantly longer because EFAS retrieval is remote and can invo
 Notes:
 - Sentinel-1, Sentinel-2, and terrain use your Copernicus Data Space OAuth client from `.env` or the current PowerShell session.
 - EFAS discharge uses the EWDS API through `cdsapi`, so you also need either a working `~/.cdsapirc` for EWDS or `EWDS_API_URL` and `EWDS_API_KEY` in `.env`, plus accepted dataset terms for `efas-historical`.
+
+To evaluate structural stability from an EGMS Ortho Vertical CSV or GeoJSON export:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --stability --egms-ortho-vertical C:\path\to\egms_ortho_vertical.csv
+```
+
+Optional site geometry inputs:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --stability --egms-ortho-vertical C:\path\to\egms_ortho_vertical.csv --reservoir-site-lat 46.658 --reservoir-site-lon 23.694 --canal-route C:\path\to\proposed_canal.gpkg
+```
+
+This writes:
+- `output\egms_stability_points.geojson`: clipped EGMS measurement points inside the AOI
+- `output\stability_summary.json`: v_mean, stability status, score, and canal differential-motion warning
+- `output\report_inputs.json`: combined terrain, soil, and structural-stability inputs for later PDF generation
+
+If you do not pass `--reservoir-site-lat/--reservoir-site-lon`, the AOI center is used. If you do not pass `--canal-route`, the longest clipped water line is used as a temporary fallback.

@@ -10,14 +10,19 @@ from heavywater_preview.config import (
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
     DEFAULT_EFAS_DAYS_BACK,
     DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
     DEFAULT_RIVER_METRIC_RESOLUTION_M,
+    DEFAULT_STABILITY_BUFFER_M,
     DEFAULT_TERRAIN_RESOLUTION_M,
     EUHYDRO_DATA_DIR,
     INDEX_HTML_NAME,
     MAP_HTML_NAME,
     QGS_NAME,
+    REPORT_INPUTS_NAME,
+    STABILITY_POINTS_NAME,
+    STABILITY_SUMMARY_NAME,
     TERRAIN_DEM_NAME,
     TERRAIN_HILLSHADE_NAME,
     TERRAIN_SUMMARY_NAME,
@@ -26,7 +31,9 @@ from heavywater_preview.config import (
 from heavywater_preview.impervious import communities_from_impervious_raster, write_community_layers
 from heavywater_preview.leaflet import write_preview_map
 from heavywater_preview.qgis_project import write_qgs_project
+from heavywater_preview.report import build_report_inputs, write_report_inputs
 from heavywater_preview.river_metrics import enrich_rivers_with_metrics
+from heavywater_preview.stability import StabilityResult, evaluate_structural_stability
 from heavywater_preview.terrain import TerrainResult, fetch_terrain_for_aoi
 from heavywater_preview.water import collect_water_layers, write_water_layers
 
@@ -39,6 +46,9 @@ class PipelineOutputs:
     terrain_dem_raster: Path | None
     terrain_hillshade_raster: Path | None
     terrain_summary_path: Path | None
+    stability_points_path: Path | None
+    stability_summary_path: Path | None
+    report_inputs_path: Path
     qgs_path: Path
     map_html_path: Path
     index_html_path: Path
@@ -59,6 +69,12 @@ def run_pipeline(
     river_metric_resolution_m: float = DEFAULT_RIVER_METRIC_RESOLUTION_M,
     river_metric_lookback_days: int = DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
     efas_days_back: int = DEFAULT_EFAS_DAYS_BACK,
+    include_stability: bool = False,
+    egms_ortho_vertical: str | Path | None = None,
+    stability_buffer_m: float = DEFAULT_STABILITY_BUFFER_M,
+    differential_motion_threshold_mm_per_year: float = DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
+    reservoir_site_wgs84: tuple[float, float] | None = None,
+    canal_route_source: str | Path | None = None,
 ) -> PipelineOutputs:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +122,30 @@ def run_pipeline(
             resolution_m=terrain_resolution_m,
         )
 
+    stability_result: StabilityResult | None = None
+    if include_stability:
+        stability_result = evaluate_structural_stability(
+            bbox_wgs84=bbox_wgs84,
+            output_points_path=output_dir / STABILITY_POINTS_NAME,
+            output_summary_path=output_dir / STABILITY_SUMMARY_NAME,
+            egms_source=egms_ortho_vertical,
+            buffer_m=stability_buffer_m,
+            differential_motion_threshold_mm_per_year=differential_motion_threshold_mm_per_year,
+            reservoir_site_wgs84=reservoir_site_wgs84,
+            canal_route_source=canal_route_source,
+            fallback_river_lines=water_lines,
+        )
+
+    report_inputs_path = output_dir / REPORT_INPUTS_NAME
+    report_inputs = build_report_inputs(
+        lat=lat,
+        lon=lon,
+        size_km=size_km,
+        terrain_summary=terrain_result.summary if terrain_result else None,
+        stability_summary=stability_result.summary if stability_result else None,
+    )
+    write_report_inputs(report_inputs_path, report_inputs)
+
     qgs_path = output_dir / QGS_NAME
     write_qgs_project(
         qgs_path=qgs_path,
@@ -137,6 +177,9 @@ def run_pipeline(
         terrain_dem_raster=terrain_result.dem_raster_path if terrain_result else None,
         terrain_hillshade_raster=terrain_result.hillshade_raster_path if terrain_result else None,
         terrain_summary_path=terrain_result.summary_path if terrain_result else None,
+        stability_points_path=stability_result.points_path if stability_result else None,
+        stability_summary_path=stability_result.summary_path if stability_result else None,
+        report_inputs_path=report_inputs_path,
         qgs_path=qgs_path,
         map_html_path=map_html_path,
         index_html_path=index_html_path,

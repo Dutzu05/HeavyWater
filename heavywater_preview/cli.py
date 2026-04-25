@@ -7,11 +7,13 @@ from pathlib import Path
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
     DEFAULT_COMMUNITY_THRESHOLD,
+    DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
     DEFAULT_EFAS_DAYS_BACK,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
     DEFAULT_RIVER_METRIC_RESOLUTION_M,
+    DEFAULT_STABILITY_BUFFER_M,
     DEFAULT_TERRAIN_RESOLUTION_M,
     PROJECT_ROOT,
 )
@@ -80,12 +82,51 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_EFAS_DAYS_BACK,
         help="How many days back from today to request EFAS historical discharge.",
     )
+    parser.add_argument(
+        "--stability",
+        action="store_true",
+        help="Evaluate structural stability from EGMS L3 Ortho Vertical measurement points.",
+    )
+    parser.add_argument(
+        "--egms-ortho-vertical",
+        type=str,
+        help="Local path or HTTPS URL to an EGMS L3 Ortho Vertical CSV or GeoJSON export.",
+    )
+    parser.add_argument(
+        "--stability-buffer-m",
+        type=float,
+        default=DEFAULT_STABILITY_BUFFER_M,
+        help="Buffer distance in meters around the reservoir site and canal route.",
+    )
+    parser.add_argument(
+        "--differential-motion-threshold",
+        type=float,
+        default=DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
+        help="Threshold in mm/year for flagging canal differential motion.",
+    )
+    parser.add_argument(
+        "--reservoir-site-lat",
+        type=float,
+        help="Optional reservoir site latitude. Defaults to the AOI center.",
+    )
+    parser.add_argument(
+        "--reservoir-site-lon",
+        type=float,
+        help="Optional reservoir site longitude. Defaults to the AOI center.",
+    )
+    parser.add_argument(
+        "--canal-route",
+        type=Path,
+        help="Optional line vector file for the proposed canal route. Falls back to the longest clipped water line.",
+    )
     return parser
 
 
 def main() -> None:
     _load_dotenv()
     args = build_parser().parse_args()
+    if (args.reservoir_site_lat is None) != (args.reservoir_site_lon is None):
+        raise SystemExit("Provide both --reservoir-site-lat and --reservoir-site-lon together.")
     outputs = run_pipeline(
         lat=args.lat,
         lon=args.lon,
@@ -101,6 +142,12 @@ def main() -> None:
         river_metric_resolution_m=args.river_metric_resolution_m,
         river_metric_lookback_days=args.river_lookback_days,
         efas_days_back=args.efas_days_back,
+        include_stability=args.stability,
+        egms_ortho_vertical=args.egms_ortho_vertical,
+        stability_buffer_m=args.stability_buffer_m,
+        differential_motion_threshold_mm_per_year=args.differential_motion_threshold,
+        reservoir_site_wgs84=(args.reservoir_site_lat, args.reservoir_site_lon) if args.reservoir_site_lat is not None else None,
+        canal_route_source=args.canal_route,
     )
     print(str(outputs.map_html_path))
 
