@@ -25,6 +25,7 @@ const stabilityBufferInput = document.querySelector("#stability-buffer-input");
 const motionThresholdInput = document.querySelector("#motion-threshold-input");
 
 const previewFrame = document.querySelector("#preview-frame");
+const previewLoader = document.querySelector("#preview-loader");
 const statusText = document.querySelector("#status-text");
 const liveCoords = document.querySelector("#live-coords");
 const generateBtn = document.querySelector("#generate-btn");
@@ -65,6 +66,7 @@ function setCoordinates(lat, lon, options = {}) {
   if (options.pan !== false) {
     map.setView([nextLat, nextLon], options.zoom ?? Math.max(map.getZoom(), 10), { animate: true });
   }
+  syncSummary(readPayload());
 }
 
 function setStatus(message, isError = false) {
@@ -83,6 +85,9 @@ function selectTab(targetId) {
   tabPanels.forEach((panel) => {
     panel.classList.toggle("is-active", panel.id === targetId);
   });
+  if (targetId === "preview-panel") {
+    document.querySelector("#preview-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function syncSummary(payload) {
@@ -153,10 +158,13 @@ async function generatePreview(event) {
   event.preventDefault();
   const payload = readPayload();
   syncSummary(payload);
+  
+  // Show loading state
   selectTab("preview-panel");
+  if (previewLoader) previewLoader.style.display = "flex";
   generateBtn.disabled = true;
   generateBtn.textContent = "Generating...";
-  setStatus(`Generating preview for ${payload.lat.toFixed(5)}, ${payload.lon.toFixed(5)}...`);
+  setStatus(`Generating geospatial preview for ${payload.lat.toFixed(5)}, ${payload.lon.toFixed(5)}... This may take up to a minute.`);
 
   try {
     const response = await fetch("/api/generate", {
@@ -168,12 +176,22 @@ async function generatePreview(event) {
     if (!response.ok || !result.ok) {
       throw new Error(result.error || "Preview generation failed.");
     }
+    
+    // Update state and iframe
     state.previewUrl = result.index_url;
-    previewFrame.src = `${result.index_url}?t=${Date.now()}`;
-    setStatus(`Preview ready for ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}.`);
-    selectTab("preview-panel");
+    // Force reload by setting src to blank then the new URL with timestamp
+    previewFrame.src = "about:blank";
+    setTimeout(() => {
+      previewFrame.src = `${result.index_url}?t=${Date.now()}`;
+      if (previewLoader) previewLoader.style.display = "none";
+    }, 50);
+    
+    setStatus(`Success! Preview ready for ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}.`);
   } catch (error) {
+    if (previewLoader) previewLoader.style.display = "none";
     setStatus(error.message, true);
+    // Switch back to map if error
+    selectTab("map-panel");
   } finally {
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate View";
