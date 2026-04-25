@@ -70,6 +70,7 @@ def evaluate_water_infrastructure(
                     dem=dem,
                     transform=transform,
                     egms_points=egms_points,
+                    soil_context=soil_context,
                     stability_buffer_m=stability_buffer_m,
                 )
                 reservoir_option = _evaluate_reservoir_option(
@@ -99,6 +100,13 @@ def evaluate_water_infrastructure(
                             "distance_to_source_m": demand.get("distance_to_source_m"),
                             "canal_length_m": canal_option["length_m"],
                             "gravity_feasibility_pct": canal_option["gravity_feasibility_pct"],
+                            "elevation_drop_m": canal_option["elevation_drop_m"],
+                            "mean_route_slope_deg": canal_option["mean_route_slope_deg"],
+                            "max_route_slope_deg": canal_option["max_route_slope_deg"],
+                            "terrain_behavior": canal_option["terrain_behavior"],
+                            "route_ksat_mm_per_hour": canal_option["route_ksat_mm_per_hour"],
+                            "route_seepage_class": canal_option["route_seepage_class"],
+                            "route_soil_behavior": canal_option["route_soil_behavior"],
                             "canal_stability_status": canal_option["stability_status"],
                             "canal_v_mean_mm_per_year": canal_option["stability_velocity_mm_per_year"],
                             "geometry": canal_option["geometry"],
@@ -139,6 +147,10 @@ def evaluate_water_infrastructure(
                         "reservoir_score": reservoir_option["score"],
                         "canal_length_m": canal_option["length_m"],
                         "canal_gravity_feasibility_pct": canal_option["gravity_feasibility_pct"],
+                        "canal_elevation_drop_m": canal_option["elevation_drop_m"],
+                        "canal_mean_route_slope_deg": canal_option["mean_route_slope_deg"],
+                        "canal_route_ksat_mm_per_hour": canal_option["route_ksat_mm_per_hour"],
+                        "canal_route_seepage_class": canal_option["route_seepage_class"],
                         "reservoir_basin_depth_m": reservoir_option["basin_depth_m"],
                         "reservoir_distance_to_demand_m": reservoir_option["distance_to_demand_m"],
                         "reservoir_distance_to_source_m": reservoir_option["distance_to_source_m"],
@@ -160,6 +172,7 @@ def _evaluate_canal_option(
     dem: np.ndarray,
     transform,
     egms_points: gpd.GeoDataFrame | None,
+    soil_context: dict,
     stability_buffer_m: float,
 ) -> dict:
     canal_line, gravity_pct = _least_cost_canal_path(dem, transform, supply_point, demand_point)
@@ -175,6 +188,18 @@ def _evaluate_canal_option(
 
     length_m = float(canal_line.length)
     stability_velocity, stability_status, _ = _line_stability(canal_line, egms_points, stability_buffer_m)
+    elevation_start_m = _sample_raster_value(dem, transform, supply_point)
+    elevation_end_m = _sample_raster_value(dem, transform, demand_point)
+    elevation_drop_m = None
+    if elevation_start_m is not None and elevation_end_m is not None:
+        elevation_drop_m = float(elevation_start_m - elevation_end_m)
+    mean_route_slope_deg, max_route_slope_deg = _line_slope_stats(canal_line, dem, transform)
+    terrain_behavior = _describe_canal_terrain(
+        gravity_pct=gravity_pct,
+        elevation_drop_m=elevation_drop_m,
+        mean_route_slope_deg=mean_route_slope_deg,
+    )
+    route_ksat_mm_per_hour, route_seepage_class, route_soil_behavior = _line_soil_summary(canal_line, soil_context)
     gravity_score = _linear_score(gravity_pct or 0.0, low=30.0, high=95.0)
     length_score = _inverse_score(length_m, low=1200.0, high=6000.0)
     stability_score = _stability_numeric_score(stability_status)
@@ -184,6 +209,13 @@ def _evaluate_canal_option(
         "score": score,
         "length_m": length_m,
         "gravity_feasibility_pct": gravity_pct,
+        "elevation_drop_m": elevation_drop_m,
+        "mean_route_slope_deg": mean_route_slope_deg,
+        "max_route_slope_deg": max_route_slope_deg,
+        "terrain_behavior": terrain_behavior,
+        "route_ksat_mm_per_hour": route_ksat_mm_per_hour,
+        "route_seepage_class": route_seepage_class,
+        "route_soil_behavior": route_soil_behavior,
         "stability_status": stability_status,
         "stability_velocity_mm_per_year": stability_velocity,
     }
@@ -504,6 +536,38 @@ def _line_stability(line: LineString, egms_points: gpd.GeoDataFrame | None, buff
     return velocity, status, score
 
 
+def _line_slope_stats(line: LineString, dem: np.ndarray, transform) -> tuple[float | None, float | None]:
+    points = _sample_line_points(line, target_count=9)
+    slopes = []
+    for point in points:
+        slope = _local_slope_at_point(point, dem, transform)
+        if slope is not None and np.isfinite(slope):
+            slopes.append(float(slope))
+    if not slopes:
+        return None, None
+    return float(np.mean(slopes)), float(np.max(slopes))
+
+
+def _line_soil_summary(line: LineString, soil_context: dict) -> tuple[float | None, str, str]:
+    transformer = Transformer.from_crs(EUHYDRO_CRS, WGS84_CRS, always_xy=True)
+    points = _sample_line_points(line, target_count=5)
+    ksat_values: list[float] = []
+    seepage_labels: list[str] = []
+
+    for point in points:
+        lon, lat = transformer.transform(point.x, point.y)
+        ksat_mm_per_hour, seepage_class, _ = _soil_snapshot(lat, lon, soil_context)
+        if ksat_mm_per_hour is not None and np.isfinite(ksat_mm_per_hour):
+            ksat_values.append(float(ksat_mm_per_hour))
+        if seepage_class and seepage_class != "Unavailable":
+            seepage_labels.append(str(seepage_class))
+
+    avg_ksat = float(np.mean(ksat_values)) if ksat_values else None
+    dominant_seepage = _mode_label(seepage_labels) or "Unavailable"
+    behavior = _describe_canal_soil(avg_ksat, dominant_seepage)
+    return avg_ksat, dominant_seepage, behavior
+
+
 def _soil_numeric_score(ksat_mm_per_hour: float | None) -> float:
     if ksat_mm_per_hour is None or not np.isfinite(ksat_mm_per_hour):
         return 35.0
@@ -531,6 +595,50 @@ def _soil_snapshot(lat: float, lon: float, soil_context: dict) -> tuple[float | 
     except Exception:
         soil_context["enabled"] = False
         return (None, "Unavailable", "Soil permeability estimate unavailable for this point.")
+
+
+def _sample_line_points(line: LineString, target_count: int) -> list[Point]:
+    if target_count <= 1 or line.length <= 0:
+        return [Point(line.coords[0])]
+    distances = np.linspace(0.0, line.length, num=target_count)
+    return [line.interpolate(float(distance)) for distance in distances]
+
+
+def _local_slope_at_point(point: Point, dem: np.ndarray, transform) -> float | None:
+    return _local_mean_value(_compute_slope_degrees(dem, transform), transform, point, radius_m=120.0)
+
+
+def _describe_canal_terrain(*, gravity_pct: float | None, elevation_drop_m: float | None, mean_route_slope_deg: float | None) -> str:
+    if gravity_pct is None:
+        return "Terrain analysis unavailable along this route."
+    if gravity_pct >= 80.0 and (elevation_drop_m is None or elevation_drop_m >= 0.0):
+        return "Mostly gravity-fed route with favorable downhill terrain."
+    if gravity_pct >= 60.0:
+        return "Terrain is workable, but some route sections fight the slope."
+    if mean_route_slope_deg is not None and mean_route_slope_deg >= 12.0:
+        return "Steep terrain raises excavation and control complexity."
+    return "Terrain support is mixed and would need closer engineering review."
+
+
+def _describe_canal_soil(avg_ksat_mm_per_hour: float | None, seepage_class: str) -> str:
+    if avg_ksat_mm_per_hour is None:
+        return "Soil permeability along the route is unavailable."
+    if seepage_class == "Low Seepage":
+        return "Route crosses tighter soils with lower seepage risk."
+    if seepage_class == "Medium Seepage":
+        return "Route crosses moderately permeable soils; lining or compaction may be needed in sections."
+    if seepage_class == "High Seepage":
+        return "Route crosses permeable soils, so canal lining would likely be required."
+    return "Soil behavior along the route is mixed."
+
+
+def _mode_label(values: list[str]) -> str | None:
+    if not values:
+        return None
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return max(counts, key=counts.get)
 
 
 def _stability_numeric_score(status: str | None) -> float:
@@ -574,6 +682,13 @@ def _empty_canals() -> gpd.GeoDataFrame:
             "distance_to_source_m",
             "canal_length_m",
             "gravity_feasibility_pct",
+            "elevation_drop_m",
+            "mean_route_slope_deg",
+            "max_route_slope_deg",
+            "terrain_behavior",
+            "route_ksat_mm_per_hour",
+            "route_seepage_class",
+            "route_soil_behavior",
             "canal_stability_status",
             "canal_v_mean_mm_per_year",
             "geometry",
