@@ -14,6 +14,7 @@ from urllib.error import URLError, HTTPError
 
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
+    DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
     DEFAULT_COMMUNITY_PIXEL_AREA_M2,
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
@@ -570,6 +571,11 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                 "min_community_area_m2",
                 DEFAULT_MIN_COMMUNITY_AREA_M2,
             )
+            community_merge_distance_m = self._optional_float(
+                payload,
+                "community_merge_distance_m",
+                DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
+            )
             include_terrain = bool(payload.get("terrain", False))
             terrain_resolution_m = self._optional_float(
                 payload,
@@ -624,6 +630,7 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                     communities_raster=communities_raster,
                     community_threshold=community_threshold,
                     min_community_area_m2=min_community_area_m2,
+                    community_merge_distance_m=community_merge_distance_m,
                     include_terrain=include_terrain,
                     terrain_resolution_m=terrain_resolution_m,
                     include_river_metrics=include_river_metrics,
@@ -711,6 +718,7 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                     "water_source": DEFAULT_WATER_SOURCE,
                     "community_threshold": DEFAULT_COMMUNITY_THRESHOLD,
                     "min_community_area_m2": DEFAULT_MIN_COMMUNITY_AREA_M2,
+                    "community_merge_distance_m": DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
                     "terrain_resolution_m": DEFAULT_TERRAIN_RESOLUTION_M,
                     "river_metrics": False,
                     "river_discharge": False,

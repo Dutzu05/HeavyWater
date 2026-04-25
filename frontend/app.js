@@ -14,6 +14,7 @@ const waterSourceInput = document.querySelector("#water-source");
 const rasterInput = document.querySelector("#communities-raster");
 const thresholdInput = document.querySelector("#threshold-input");
 const minAreaInput = document.querySelector("#min-area-input");
+const communityMergeInput = document.querySelector("#community-merge-input");
 const terrainToggle = document.querySelector("#terrain-toggle");
 const terrainResolutionInput = document.querySelector("#terrain-resolution-input");
 const metricsToggle = document.querySelector("#metrics-toggle");
@@ -120,6 +121,7 @@ async function loadStatus() {
   waterSourceInput.value = payload.defaults.water_source;
   thresholdInput.value = payload.defaults.community_threshold;
   minAreaInput.value = payload.defaults.min_community_area_m2;
+  communityMergeInput.value = payload.defaults.community_merge_distance_m;
   terrainResolutionInput.value = payload.defaults.terrain_resolution_m;
 
   metricsToggle.checked = payload.defaults.river_metrics;
@@ -155,6 +157,7 @@ function readPayload() {
     communities_raster: rasterInput.value.trim(),
     community_threshold: Number(thresholdInput.value),
     min_community_area_m2: Number(minAreaInput.value),
+    community_merge_distance_m: Number(communityMergeInput.value),
     terrain: terrainToggle.checked,
     terrain_resolution_m: Number(terrainResolutionInput.value),
     river_metrics: metricsToggle.checked,
@@ -294,7 +297,7 @@ marker.on("dragend", (event) => {
   });
 });
 
-[sizeInput, waterSourceInput, rasterInput, thresholdInput, minAreaInput, terrainToggle, metricsToggle, dischargeToggle, metricResInput, lookbackInput, stabilityToggle, stabilityBufferInput, motionThresholdInput, waterRiskToggle, waterRiskModeInput, farmDemandInput, glofasDaysInput].forEach((input) => {
+[sizeInput, waterSourceInput, rasterInput, thresholdInput, minAreaInput, communityMergeInput, terrainToggle, metricsToggle, dischargeToggle, metricResInput, lookbackInput, stabilityToggle, stabilityBufferInput, motionThresholdInput, waterRiskToggle, waterRiskModeInput, farmDemandInput, glofasDaysInput].forEach((input) => {
   input.addEventListener("change", () => syncSummary(readPayload()));
 });
 

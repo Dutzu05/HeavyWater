@@ -14,7 +14,14 @@ from rasterio.mask import mask
 from rasterio.io import MemoryFile
 from shapely.geometry import mapping, shape
 
-from heavywater_preview.config import COMMUNITIES_ARCHIVE_NAME, COMMUNITIES_LAYER, EUHYDRO_CRS, LOCAL_COMMUNITIES_DATA_DIR, WGS84_CRS
+from heavywater_preview.config import (
+    COMMUNITIES_ARCHIVE_NAME,
+    COMMUNITIES_LAYER,
+    DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
+    EUHYDRO_CRS,
+    LOCAL_COMMUNITIES_DATA_DIR,
+    WGS84_CRS,
+)
 from heavywater_preview.geom import project_geometry
 
 
@@ -23,6 +30,7 @@ def communities_from_impervious_raster(
     aoi_wgs84,
     threshold: float,
     min_area_m2: float,
+    merge_distance_m: float = DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
 ) -> gpd.GeoDataFrame:
     if raster_path is None:
         raster_paths = _ensure_overlapping_communities_rasters(aoi_wgs84)
@@ -72,6 +80,7 @@ def communities_from_impervious_raster(
         return _empty_communities()
 
     communities["geometry"] = communities.geometry.buffer(0)
+    communities = merge_nearby_communities(communities, merge_distance_m=merge_distance_m)
     return communities[["class_name", "threshold", "area_m2", "geometry"]]
 
 
@@ -84,6 +93,28 @@ def write_community_layers(communities: gpd.GeoDataFrame, output_path: Path) -> 
 
 def _empty_communities() -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(columns=["class_name", "threshold", "area_m2", "geometry"], geometry="geometry", crs=EUHYDRO_CRS)
+
+
+def merge_nearby_communities(communities: gpd.GeoDataFrame, merge_distance_m: float) -> gpd.GeoDataFrame:
+    if communities.empty or merge_distance_m <= 0:
+        return communities.copy()
+
+    working = communities[["class_name", "threshold", "geometry"]].copy()
+    working["geometry"] = working.geometry.buffer(merge_distance_m / 2.0)
+    dissolved_geometry = working.geometry.union_all()
+    if dissolved_geometry.is_empty:
+        return _empty_communities()
+
+    merged = gpd.GeoDataFrame(geometry=gpd.GeoSeries([dissolved_geometry], crs=EUHYDRO_CRS).explode(index_parts=False), crs=EUHYDRO_CRS)
+    merged["geometry"] = merged.geometry.buffer(-(merge_distance_m / 2.0)).buffer(0)
+    merged = merged[merged.geometry.notna() & ~merged.geometry.is_empty].copy()
+    if merged.empty:
+        return _empty_communities()
+
+    merged["class_name"] = "community"
+    merged["threshold"] = float(communities["threshold"].iloc[0]) if "threshold" in communities.columns and not communities.empty else np.nan
+    merged["area_m2"] = merged.geometry.area.astype(float)
+    return merged[["class_name", "threshold", "area_m2", "geometry"]].reset_index(drop=True)
 
 
 def _ensure_overlapping_communities_rasters(aoi_wgs84) -> list[Path]:

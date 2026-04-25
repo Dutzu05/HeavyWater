@@ -7,6 +7,7 @@ from pathlib import Path
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
     DEFAULT_COMMUNITY_PIXEL_AREA_M2,
+    DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
     DEFAULT_EFAS_DAYS_BACK,
@@ -55,6 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_MIN_COMMUNITY_AREA_M2,
         help="Minimum connected community area to keep.",
+    )
+    parser.add_argument(
+        "--community-merge-distance-m",
+        type=float,
+        default=DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
+        help="Merge built-up community patches separated by this distance or less.",
     )
     parser.add_argument(
         "--terrain",
@@ -184,6 +191,7 @@ def main() -> None:
         communities_raster=args.communities_raster,
         community_threshold=args.community_threshold,
         min_community_area_m2=args.min_community_area_m2,
+        community_merge_distance_m=args.community_merge_distance_m,
         include_terrain=args.terrain,
         terrain_resolution_m=args.terrain_resolution_m,
         include_river_metrics=args.river_metrics,

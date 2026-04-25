@@ -8,6 +8,7 @@ from heavywater_preview.config import (
     COMMUNITY_GPKG_NAME,
     DEFAULT_BBOX_SIZE_KM,
     DEFAULT_COMMUNITY_PIXEL_AREA_M2,
+    DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_FARM_DEMAND_M3_DAY,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
@@ -75,6 +76,7 @@ def run_pipeline(
     communities_raster: str | Path | None = None,
     community_threshold: float = DEFAULT_COMMUNITY_THRESHOLD,
     min_community_area_m2: float = DEFAULT_MIN_COMMUNITY_AREA_M2,
+    community_merge_distance_m: float = DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
     include_terrain: bool = False,
     terrain_resolution_m: float = DEFAULT_TERRAIN_RESOLUTION_M,
     include_river_metrics: bool = False,
@@ -131,6 +133,7 @@ def run_pipeline(
         aoi_wgs84=aoi_wgs84,
         threshold=community_threshold,
         min_area_m2=min_community_area_m2,
+        merge_distance_m=community_merge_distance_m,
     )
     community_gpkg = output_dir / COMMUNITY_GPKG_NAME
     write_community_layers(communities, community_gpkg)
