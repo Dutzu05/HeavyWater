@@ -648,6 +648,7 @@ button {
 
 .tab-strip {
   display: flex;
+  width: fit-content;
   gap: 8px;
   padding: 8px;
   border-radius: 16px;
@@ -657,8 +658,7 @@ button {
 }
 
 .tab-btn {
-  flex: 1;
-  padding: 12px 18px;
+  padding: 10px 24px;
   border-radius: 12px;
   text-transform: capitalize;
   font-weight: 500;
