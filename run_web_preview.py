@@ -16,8 +16,13 @@ from urllib.error import URLError, HTTPError
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
     DEFAULT_COMMUNITY_THRESHOLD,
+    DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
+    DEFAULT_EFAS_DAYS_BACK,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
+    DEFAULT_RIVER_METRIC_RESOLUTION_M,
+    DEFAULT_STABILITY_BUFFER_M,
     DEFAULT_TERRAIN_RESOLUTION_M,
     DEFAULT_WATER_SOURCE,
     INDEX_HTML_NAME,
@@ -25,6 +30,13 @@ from heavywater_preview.config import (
     WATER_SOURCE_EUHYDRO,
     WATER_SOURCE_OVERPASS,
 )
+
+try:
+    from heavywater_preview.pipeline import run_pipeline
+    HAS_GIS_PIPELINE = True
+except ImportError:
+    run_pipeline = None
+    HAS_GIS_PIPELINE = False
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -556,41 +568,83 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
             lat = self._require_float(payload, "lat")
             lon = self._require_float(payload, "lon")
             size_km = self._optional_float(payload, "size_km", DEFAULT_BBOX_SIZE_KM)
+            water_source = payload.get("water_source") or DEFAULT_WATER_SOURCE
+            communities_raster = payload.get("communities_raster") or None
             community_threshold = self._optional_float(payload, "community_threshold", DEFAULT_COMMUNITY_THRESHOLD)
             min_community_area_m2 = self._optional_float(
                 payload,
                 "min_community_area_m2",
                 DEFAULT_MIN_COMMUNITY_AREA_M2,
             )
+            include_terrain = bool(payload.get("terrain", False))
             terrain_resolution_m = self._optional_float(
                 payload,
                 "terrain_resolution_m",
                 DEFAULT_TERRAIN_RESOLUTION_M,
             )
-            include_terrain = bool(payload.get("terrain", False))
-            communities_raster = payload.get("communities_raster") or None
-            water_source = payload.get("water_source") or DEFAULT_WATER_SOURCE
-            if water_source not in {WATER_SOURCE_EUHYDRO, WATER_SOURCE_OVERPASS}:
-                raise ValueError("Unsupported water source.")
 
-            # Python 3.14-friendly generator (Overpass-only) that produces both Water + Communities layers.
-            # The original GIS pipeline (GeoTIFF-based communities + GPKG outputs) requires compiled
-            # dependencies that may not be available on 3.14 yet.
-            map_html_path, index_html_path = _write_fallback_preview(
-                lat=lat,
-                lon=lon,
-                size_km=size_km,
-                output_dir=OUTPUT_DIR,
+            # Hydrology parameters
+            include_river_metrics = bool(payload.get("river_metrics", False))
+            include_river_discharge = bool(payload.get("river_discharge", False))
+            river_metric_resolution_m = self._optional_float(
+                payload, "river_metric_resolution_m", DEFAULT_RIVER_METRIC_RESOLUTION_M
             )
-            outputs = type(
-                "FallbackOutputs",
-                (),
-                {
-                    "map_html_path": map_html_path,
-                    "index_html_path": index_html_path,
-                    "output_dir": OUTPUT_DIR,
-                },
-            )()
+            river_metric_lookback_days = int(self._optional_float(
+                payload, "river_metric_lookback_days", float(DEFAULT_RIVER_METRIC_LOOKBACK_DAYS)
+            ))
+            efas_days_back = int(self._optional_float(
+                payload, "efas_days_back", float(DEFAULT_EFAS_DAYS_BACK)
+            ))
+
+            # Stability parameters
+            include_stability = bool(payload.get("stability", False))
+            egms_ortho_vertical = payload.get("egms_ortho_vertical") or None
+            stability_buffer_m = self._optional_float(
+                payload, "stability_buffer_m", DEFAULT_STABILITY_BUFFER_M
+            )
+            differential_motion_threshold = self._optional_float(
+                payload, "differential_motion_threshold", DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD
+            )
+
+            if HAS_GIS_PIPELINE and run_pipeline:
+                outputs = run_pipeline(
+                    lat=lat,
+                    lon=lon,
+                    size_km=size_km,
+                    output_dir=OUTPUT_DIR,
+                    water_source=water_source,
+                    communities_raster=communities_raster,
+                    community_threshold=community_threshold,
+                    min_community_area_m2=min_community_area_m2,
+                    include_terrain=include_terrain,
+                    terrain_resolution_m=terrain_resolution_m,
+                    include_river_metrics=include_river_metrics,
+                    include_river_discharge=include_river_discharge,
+                    river_metric_resolution_m=river_metric_resolution_m,
+                    river_metric_lookback_days=river_metric_lookback_days,
+                    efas_days_back=efas_days_back,
+                    include_stability=include_stability,
+                    egms_ortho_vertical=egms_ortho_vertical,
+                    stability_buffer_m=stability_buffer_m,
+                    differential_motion_threshold_mm_per_year=differential_motion_threshold,
+                )
+            else:
+                # Fallback generator (Overpass-only)
+                map_html_path, index_html_path = _write_fallback_preview(
+                    lat=lat,
+                    lon=lon,
+                    size_km=size_km,
+                    output_dir=OUTPUT_DIR,
+                )
+                outputs = type(
+                    "FallbackOutputs",
+                    (),
+                    {
+                        "map_html_path": map_html_path,
+                        "index_html_path": index_html_path,
+                        "output_dir": OUTPUT_DIR,
+                    },
+                )()
         except Exception as exc:
             self._write_json(
                 HTTPStatus.BAD_REQUEST,
@@ -637,12 +691,21 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "has_preview": INDEX_PATH.exists(),
                 "preview_url": "/output/index.html" if INDEX_PATH.exists() else None,
+                "has_gis_pipeline": HAS_GIS_PIPELINE,
                 "defaults": {
                     "size_km": DEFAULT_BBOX_SIZE_KM,
                     "water_source": DEFAULT_WATER_SOURCE,
                     "community_threshold": DEFAULT_COMMUNITY_THRESHOLD,
                     "min_community_area_m2": DEFAULT_MIN_COMMUNITY_AREA_M2,
                     "terrain_resolution_m": DEFAULT_TERRAIN_RESOLUTION_M,
+                    "river_metrics": False,
+                    "river_discharge": False,
+                    "river_metric_resolution_m": DEFAULT_RIVER_METRIC_RESOLUTION_M,
+                    "river_metric_lookback_days": DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
+                    "efas_days_back": DEFAULT_EFAS_DAYS_BACK,
+                    "stability": False,
+                    "stability_buffer_m": DEFAULT_STABILITY_BUFFER_M,
+                    "differential_motion_threshold": DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
                 },
             },
         )

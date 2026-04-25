@@ -16,6 +16,14 @@ const thresholdInput = document.querySelector("#threshold-input");
 const minAreaInput = document.querySelector("#min-area-input");
 const terrainToggle = document.querySelector("#terrain-toggle");
 const terrainResolutionInput = document.querySelector("#terrain-resolution-input");
+const metricsToggle = document.querySelector("#metrics-toggle");
+const dischargeToggle = document.querySelector("#discharge-toggle");
+const metricResInput = document.querySelector("#metric-res-input");
+const lookbackInput = document.querySelector("#lookback-input");
+const stabilityToggle = document.querySelector("#stability-toggle");
+const stabilityBufferInput = document.querySelector("#stability-buffer-input");
+const motionThresholdInput = document.querySelector("#motion-threshold-input");
+
 const previewFrame = document.querySelector("#preview-frame");
 const statusText = document.querySelector("#status-text");
 const liveCoords = document.querySelector("#live-coords");
@@ -23,6 +31,11 @@ const generateBtn = document.querySelector("#generate-btn");
 const metricWaterSource = document.querySelector("#metric-water-source");
 const metricSize = document.querySelector("#metric-size");
 const metricTerrain = document.querySelector("#metric-terrain");
+const metricHydrology = document.createElement("article");
+metricHydrology.className = "metric-card";
+metricHydrology.innerHTML = "<span>Hydrology</span><strong id=\"metric-hydrology\">Off</strong>";
+document.querySelector(".metric-grid").appendChild(metricHydrology);
+
 const insightWaterSource = document.querySelector("#insight-water-source");
 const insightRaster = document.querySelector("#insight-raster");
 const insightThreshold = document.querySelector("#insight-threshold");
@@ -77,6 +90,8 @@ function syncSummary(payload) {
   metricWaterSource.textContent = payload.water_source === "euhydro" ? "EuHydro" : "Overpass";
   metricSize.textContent = `${payload.size_km} km`;
   metricTerrain.textContent = payload.terrain ? "On" : "Off";
+  document.querySelector("#metric-hydrology").textContent = payload.river_metrics ? "On" : "Off";
+
   insightWaterSource.textContent = waterSourceLabel;
   insightRaster.textContent = payload.communities_raster || "Not set";
   insightThreshold.textContent = String(payload.community_threshold);
@@ -92,14 +107,17 @@ async function loadStatus() {
   thresholdInput.value = payload.defaults.community_threshold;
   minAreaInput.value = payload.defaults.min_community_area_m2;
   terrainResolutionInput.value = payload.defaults.terrain_resolution_m;
-  syncSummary({
-    water_source: payload.defaults.water_source,
-    size_km: payload.defaults.size_km,
-    terrain: terrainToggle.checked,
-    communities_raster: rasterInput.value.trim(),
-    community_threshold: payload.defaults.community_threshold,
-    min_community_area_m2: payload.defaults.min_community_area_m2,
-  });
+  
+  metricsToggle.checked = payload.defaults.river_metrics;
+  dischargeToggle.checked = payload.defaults.river_discharge;
+  metricResInput.value = payload.defaults.river_metric_resolution_m;
+  lookbackInput.value = payload.defaults.river_metric_lookback_days;
+  
+  stabilityToggle.checked = payload.defaults.stability;
+  stabilityBufferInput.value = payload.defaults.stability_buffer_m;
+  motionThresholdInput.value = payload.defaults.differential_motion_threshold;
+
+  syncSummary(readPayload());
 
   if (payload.has_preview && payload.preview_url) {
     state.previewUrl = payload.preview_url;
@@ -121,6 +139,13 @@ function readPayload() {
     min_community_area_m2: Number(minAreaInput.value),
     terrain: terrainToggle.checked,
     terrain_resolution_m: Number(terrainResolutionInput.value),
+    river_metrics: metricsToggle.checked,
+    river_discharge: dischargeToggle.checked,
+    river_metric_resolution_m: Number(metricResInput.value),
+    river_metric_lookback_days: Number(lookbackInput.value),
+    stability: stabilityToggle.checked,
+    stability_buffer_m: Number(stabilityBufferInput.value),
+    differential_motion_threshold: Number(motionThresholdInput.value),
   };
 }
 
@@ -234,7 +259,7 @@ marker.on("dragend", (event) => {
   });
 });
 
-[sizeInput, waterSourceInput, rasterInput, thresholdInput, minAreaInput, terrainToggle].forEach((input) => {
+[sizeInput, waterSourceInput, rasterInput, thresholdInput, minAreaInput, terrainToggle, metricsToggle, dischargeToggle, metricResInput, lookbackInput, stabilityToggle, stabilityBufferInput, motionThresholdInput].forEach((input) => {
   input.addEventListener("change", () => syncSummary(readPayload()));
 });
 

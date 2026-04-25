@@ -502,6 +502,17 @@ button {
   grid-column: 1 / -1;
 }
 
+.divider {
+  margin: 12px 0 4px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;

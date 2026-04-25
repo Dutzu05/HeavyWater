@@ -115,6 +115,61 @@
               </span>
             </label>
 
+            <div class="divider wide">Hydrology & Metrics</div>
+
+            <label class="toggle-row wide">
+              <span class="toggle-copy">
+                <strong>River metrics</strong>
+                <small>Fetch water quality and quantity indicators.</small>
+              </span>
+              <span class="toggle-switch">
+                <input id="metrics-toggle" name="river_metrics" type="checkbox">
+                <span class="toggle-track"></span>
+              </span>
+            </label>
+
+            <label class="toggle-row wide">
+              <span class="toggle-copy">
+                <strong>Discharge simulation</strong>
+                <small>Include river flow simulations (EFAS).</small>
+              </span>
+              <span class="toggle-switch">
+                <input id="discharge-toggle" name="river_discharge" type="checkbox">
+                <span class="toggle-track"></span>
+              </span>
+            </label>
+
+            <label>
+              <span>Metric resolution (m)</span>
+              <input id="metric-res-input" name="river_metric_resolution_m" type="number" min="1" step="1">
+            </label>
+            <label>
+              <span>Lookback (days)</span>
+              <input id="lookback-input" name="river_metric_lookback_days" type="number" min="1" step="1">
+            </label>
+
+            <div class="divider wide">Ground Stability</div>
+
+            <label class="toggle-row wide">
+              <span class="toggle-copy">
+                <strong>Stability analysis</strong>
+                <small>Analyze ground motion trends from EGMS.</small>
+              </span>
+              <span class="toggle-switch">
+                <input id="stability-toggle" name="stability" type="checkbox">
+                <span class="toggle-track"></span>
+              </span>
+            </label>
+
+            <label>
+              <span>Search buffer (m)</span>
+              <input id="stability-buffer-input" name="stability_buffer_m" type="number" min="1" step="10">
+            </label>
+            <label>
+              <span>Motion threshold (mm/y)</span>
+              <input id="motion-threshold-input" name="differential_motion_threshold" type="number" min="0.1" step="0.1">
+            </label>
+
             <div class="button-row">
               <button class="primary-btn" id="generate-btn" type="submit">Generate View</button>
               <button class="ghost-btn" id="reset-btn" type="button">Reset</button>
