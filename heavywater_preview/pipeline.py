@@ -10,15 +10,20 @@ from heavywater_preview.config import (
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_TERRAIN_RESOLUTION_M,
     EUHYDRO_DATA_DIR,
     INDEX_HTML_NAME,
     MAP_HTML_NAME,
     QGS_NAME,
+    TERRAIN_DEM_NAME,
+    TERRAIN_HILLSHADE_NAME,
+    TERRAIN_SUMMARY_NAME,
     WATER_GPKG_NAME,
 )
 from heavywater_preview.impervious import communities_from_impervious_raster, write_community_layers
 from heavywater_preview.leaflet import write_preview_map
 from heavywater_preview.qgis_project import write_qgs_project
+from heavywater_preview.terrain import TerrainResult, fetch_terrain_for_aoi
 from heavywater_preview.water import collect_water_layers, write_water_layers
 
 
@@ -27,6 +32,9 @@ class PipelineOutputs:
     output_dir: Path
     water_gpkg: Path
     community_gpkg: Path
+    terrain_dem_raster: Path | None
+    terrain_hillshade_raster: Path | None
+    terrain_summary_path: Path | None
     qgs_path: Path
     map_html_path: Path
     index_html_path: Path
@@ -40,6 +48,8 @@ def run_pipeline(
     communities_raster: str | Path | None = None,
     community_threshold: float = DEFAULT_COMMUNITY_THRESHOLD,
     min_community_area_m2: float = DEFAULT_MIN_COMMUNITY_AREA_M2,
+    include_terrain: bool = False,
+    terrain_resolution_m: float = DEFAULT_TERRAIN_RESOLUTION_M,
 ) -> PipelineOutputs:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -66,11 +76,22 @@ def run_pipeline(
     community_gpkg = output_dir / COMMUNITY_GPKG_NAME
     write_community_layers(communities, community_gpkg)
 
+    terrain_result: TerrainResult | None = None
+    if include_terrain:
+        terrain_result = fetch_terrain_for_aoi(
+            bbox_wgs84=bbox_wgs84,
+            dem_output_path=output_dir / TERRAIN_DEM_NAME,
+            hillshade_output_path=output_dir / TERRAIN_HILLSHADE_NAME,
+            summary_output_path=output_dir / TERRAIN_SUMMARY_NAME,
+            resolution_m=terrain_resolution_m,
+        )
+
     qgs_path = output_dir / QGS_NAME
     write_qgs_project(
         qgs_path=qgs_path,
         water_gpkg=water_gpkg,
         community_gpkg=community_gpkg,
+        terrain_raster=terrain_result.hillshade_raster_path if terrain_result else None,
         bbox_wgs84=bbox_wgs84,
     )
 
@@ -84,12 +105,18 @@ def run_pipeline(
         bbox_wgs84=bbox_wgs84,
         water_lines=water_lines,
         communities=communities,
+        terrain_dem_raster=terrain_result.dem_raster_path if terrain_result else None,
+        terrain_hillshade_raster=terrain_result.hillshade_raster_path if terrain_result else None,
+        terrain_query_data=terrain_result.query_data if terrain_result else None,
     )
 
     return PipelineOutputs(
         output_dir=output_dir,
         water_gpkg=water_gpkg,
         community_gpkg=community_gpkg,
+        terrain_dem_raster=terrain_result.dem_raster_path if terrain_result else None,
+        terrain_hillshade_raster=terrain_result.hillshade_raster_path if terrain_result else None,
+        terrain_summary_path=terrain_result.summary_path if terrain_result else None,
         qgs_path=qgs_path,
         map_html_path=map_html_path,
         index_html_path=index_html_path,

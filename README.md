@@ -3,6 +3,7 @@
 Local Python pipeline for:
 - clipping nearby EuHydro water bodies for a `lat, lon` AOI
 - extracting community polygons from a Copernicus imperviousness or built-up GeoTIFF
+- fetching Copernicus GLO-30 terrain for the AOI through the Copernicus Data Space Sentinel Hub Process API
 - generating a Folium preview map and a basic QGIS project
 
 ## Project Layout
@@ -50,3 +51,21 @@ For a density raster, increase the threshold to keep only more built-up pixels:
 ```powershell
 python .\extract_water_preview.py 46.66 23.69 --communities-raster C:\path\to\impervious_density_2021.tif --community-threshold 20
 ```
+
+To include terrain from Copernicus GLO-30, first set OAuth credentials from your Copernicus Data Space Sentinel Hub client:
+
+```powershell
+$env:CDSE_CLIENT_ID="your-client-id"
+$env:CDSE_CLIENT_SECRET="your-client-secret"
+```
+
+Then run:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --communities-raster C:\path\to\copernicus_impervious_2021.tif --terrain
+```
+
+This writes:
+- `output\terrain_dem.tif`: fetched DEM
+- `output\terrain_hillshade.tif`: terrain hillshade used in the map
+- `output\terrain_summary.json`: min/max/mean elevation and slope summary

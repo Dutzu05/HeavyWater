@@ -8,6 +8,7 @@ def write_qgs_project(
     qgs_path: Path,
     water_gpkg: Path,
     community_gpkg: Path,
+    terrain_raster: Path | None,
     bbox_wgs84: tuple[float, float, float, float],
 ) -> None:
     project = ET.Element("qgis", version="3.34.0", projectname="Rivers Communities Preview")
@@ -24,6 +25,20 @@ def write_qgs_project(
             "source": "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmin=0&zmax=19",
             "style": None,
         },
+    ]
+    if terrain_raster is not None:
+        layers.append(
+            {
+                "id": "terrain",
+                "name": "Terrain",
+                "type": "raster",
+                "source": str(terrain_raster),
+                "style": None,
+            }
+        )
+
+    layers.extend(
+        [
         {
             "id": "communities",
             "name": "Communities",
@@ -38,7 +53,8 @@ def write_qgs_project(
             "source": f"{water_gpkg}|layername=water_lines",
             "style": "water_line",
         },
-    ]
+        ]
+    )
 
     for layer in layers:
         ET.SubElement(layer_tree, "layer-tree-layer", {"id": layer["id"], "name": layer["name"], "checked": "Qt::Checked", "expanded": "1"})

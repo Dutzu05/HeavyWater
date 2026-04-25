@@ -1,2 +1,1 @@
-"""Water and SAR preview pipeline."""
-
+"""Water, communities, and terrain preview pipeline."""
