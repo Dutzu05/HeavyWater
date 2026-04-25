@@ -124,13 +124,37 @@ def write_preview_map(
         risk_group.add_to(fmap)
 
     if canal_paths is not None and not canal_paths.empty:
-        canal_group = folium.FeatureGroup(name="Suggested Canal", show=True)
+        canal_group = folium.FeatureGroup(name="Recommended Canal", show=True)
+        canal_fields = [
+            field
+            for field in (
+                "decision",
+                "option_score",
+                "canal_length_m",
+                "distance_to_source_m",
+                "gravity_feasibility_pct",
+                "canal_stability_status",
+                "canal_v_mean_mm_per_year",
+                "decision_reason",
+            )
+            if field in canal_paths.columns
+        ]
+        canal_aliases = {
+            "decision": "Decision",
+            "option_score": "Canal score",
+            "canal_length_m": "Canal length (m)",
+            "distance_to_source_m": "Distance to source (m)",
+            "gravity_feasibility_pct": "Gravity feasibility %",
+            "canal_stability_status": "Stability safety rating",
+            "canal_v_mean_mm_per_year": "Mean movement (mm/year)",
+            "decision_reason": "Reason",
+        }
         folium.GeoJson(
             data=json.loads(_format_feasibility_properties(canal_paths).to_crs("EPSG:4326").to_json(default=str)),
             style_function=lambda _: {"color": "#7a3db8", "weight": 4, "opacity": 0.9, "dashArray": "6,4"},
             popup=folium.GeoJsonPopup(
-                fields=["distance_to_source_m", "gravity_feasibility_pct", "risk_status"],
-                aliases=["Distance to source (m)", "Gravity feasibility %", "Risk status"],
+                fields=canal_fields,
+                aliases=[canal_aliases[field] for field in canal_fields],
                 localize=True,
                 labels=True,
             ),
@@ -138,23 +162,53 @@ def write_preview_map(
         canal_group.add_to(fmap)
 
     if feasibility_sites is not None and not feasibility_sites.empty:
-        site_group = folium.FeatureGroup(name="Prime Construction Site", show=True)
-        for _, row in _format_feasibility_properties(feasibility_sites).to_crs("EPSG:4326").iterrows():
-            style = _site_style(row.get("stability_status"))
-            popup_html = (
-                "<strong>Prime Construction Site</strong><br>"
-                f"Site type: {row.get('site_type', 'n/a')}<br>"
-                f"Gravity feasibility: {row.get('gravity_feasibility_pct', 'n/a')} %<br>"
-                f"Stability safety rating: {row.get('stability_status', 'n/a')}<br>"
-                f"Basin feasibility: {row.get('basin_feasibility', 'n/a')}<br>"
-                f"Ksat: {row.get('ksat_mm_per_hour', 'n/a')} mm/h"
+        site_group = folium.FeatureGroup(name="Recommended Reservoir", show=True)
+        site_fields = [
+            field
+            for field in (
+                "decision",
+                "option_score",
+                "distance_to_demand_m",
+                "distance_to_source_m",
+                "gravity_feasibility_pct",
+                "feed_canal_length_m",
+                "basin_depth_m",
+                "local_slope_deg",
+                "stability_status",
+                "stability_velocity_mm_per_year",
+                "ksat_mm_per_hour",
+                "seepage_class",
+                "engineering_note",
+                "decision_reason",
             )
-            folium.CircleMarker(
-                location=[row.geometry.y, row.geometry.x],
-                radius=8,
-                popup=popup_html,
-                **style,
-            ).add_to(site_group)
+            if field in feasibility_sites.columns
+        ]
+        site_aliases = {
+            "decision": "Decision",
+            "option_score": "Reservoir score",
+            "distance_to_demand_m": "Distance to demand (m)",
+            "distance_to_source_m": "Distance to source (m)",
+            "gravity_feasibility_pct": "Feed gravity feasibility %",
+            "feed_canal_length_m": "Feed canal length (m)",
+            "basin_depth_m": "Basin depth (m)",
+            "local_slope_deg": "Local slope (deg)",
+            "stability_status": "Stability safety rating",
+            "stability_velocity_mm_per_year": "Mean movement (mm/year)",
+            "ksat_mm_per_hour": "Ksat (mm/h)",
+            "seepage_class": "Seepage class",
+            "engineering_note": "Engineering note",
+            "decision_reason": "Reason",
+        }
+        folium.GeoJson(
+            data=json.loads(_format_feasibility_properties(feasibility_sites).to_crs("EPSG:4326").to_json(default=str)),
+            style_function=lambda feature: _site_style((feature.get("properties") or {}).get("stability_status")),
+            popup=folium.GeoJsonPopup(
+                fields=site_fields,
+                aliases=[site_aliases[field] for field in site_fields],
+                localize=True,
+                labels=True,
+            ),
+        ).add_to(site_group)
         site_group.add_to(fmap)
 
     fmap.fit_bounds([[bbox_wgs84[1], bbox_wgs84[0]], [bbox_wgs84[3], bbox_wgs84[2]]])
@@ -494,7 +548,19 @@ def _format_community_properties(communities):
 
 def _format_feasibility_properties(features):
     enriched = features.copy()
-    for column in ("distance_to_source_m", "gravity_feasibility_pct", "ksat_mm_per_hour"):
+    for column in (
+        "option_score",
+        "distance_to_source_m",
+        "distance_to_demand_m",
+        "gravity_feasibility_pct",
+        "feed_canal_length_m",
+        "canal_length_m",
+        "canal_v_mean_mm_per_year",
+        "stability_velocity_mm_per_year",
+        "ksat_mm_per_hour",
+        "basin_depth_m",
+        "local_slope_deg",
+    ):
         if column in enriched.columns:
             enriched[column] = enriched[column].map(_format_generic)
     return enriched
@@ -528,7 +594,7 @@ def _site_style(stability_status: str | None) -> dict:
         "STATUS: HIGH RISK": "#d73027",
     }
     color = color_map.get(stability_status or "", "#2c7fb8")
-    return {"color": color, "fillColor": color, "weight": 2, "fillOpacity": 0.9, "opacity": 0.95}
+    return {"color": color, "fillColor": color, "weight": 2, "fillOpacity": 0.35, "opacity": 0.95}
 
 
 

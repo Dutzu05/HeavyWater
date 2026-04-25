@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import heapq
 import json
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -9,12 +8,8 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import rasterio
 from netCDF4 import Dataset
 from pyproj import Transformer
-from rasterio.transform import rowcol, xy
-from rasterio.vrt import WarpedVRT
-from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
 
 from heavywater_preview.config import (
@@ -26,9 +21,8 @@ from heavywater_preview.config import (
     WATER_RISK_SUMMARY_NAME,
     WGS84_CRS,
 )
+from heavywater_preview.decision import evaluate_water_infrastructure
 from heavywater_preview.river_metrics import _build_ewds_client, _first_present, _infer_discharge_var_name
-from heavywater_preview.soil import query_soilgrids_textures
-from heavywater_preview.stability import classify_stability, load_egms_ortho_vertical_points
 
 
 @dataclass
@@ -103,14 +97,20 @@ def run_water_risk_analysis(
         geometry="geometry",
         crs=EUHYDRO_CRS,
     )
+    decision_rows = []
     if terrain_dem_raster is not None and (risk_points["water_risk"] == "HIGH RISK").any():
-        canals, sites = _build_feasibility_outputs(
-            risk_points=risk_points,
+        decision_outputs = evaluate_water_infrastructure(
+            high_risk_points=risk_points[risk_points["water_risk"] == "HIGH RISK"].copy(),
+            water_sources=water_sources,
             terrain_dem_raster=terrain_dem_raster,
+            bbox_wgs84=bbox_wgs84,
             egms_ortho_vertical=egms_ortho_vertical,
             stability_buffer_m=stability_buffer_m,
             differential_motion_threshold_mm_per_year=differential_motion_threshold_mm_per_year,
         )
+        canals = decision_outputs.canals
+        sites = decision_outputs.sites
+        decision_rows = decision_outputs.summary_rows
 
     risk_points_path = output_dir / WATER_RISK_POINTS_NAME
     canals_path = output_dir / WATER_RISK_CANALS_NAME
@@ -130,6 +130,7 @@ def run_water_risk_analysis(
         "moderate_risk_count": int((risk_points["water_risk"] == "MODERATE RISK").sum()),
         "low_risk_count": int((risk_points["water_risk"] == "LOW RISK").sum()),
         "report_rows": json.loads(risk_points.drop(columns="geometry").to_json(orient="records")),
+        "infrastructure_recommendations": decision_rows,
         "feasibility_sites": json.loads(sites.drop(columns="geometry").to_json(orient="records")) if not sites.empty else [],
     }
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -342,194 +343,3 @@ def _score_water_risk(risk_points: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             result.at[idx, "water_risk"] = "MODERATE RISK"
             result.at[idx, "risk_reason"] = "Source is farther than 2 km but modeled supply exceeds estimated demand."
     return result
-
-
-def _build_feasibility_outputs(
-    *,
-    risk_points: gpd.GeoDataFrame,
-    terrain_dem_raster: Path,
-    egms_ortho_vertical: str | Path | None,
-    stability_buffer_m: float,
-    differential_motion_threshold_mm_per_year: float,
-) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    high_risk = risk_points[risk_points["water_risk"] == "HIGH RISK"].copy()
-    if high_risk.empty:
-        return (
-            gpd.GeoDataFrame(columns=["gravity_feasibility_pct", "risk_status", "geometry"], geometry="geometry", crs=EUHYDRO_CRS),
-            gpd.GeoDataFrame(columns=["site_type", "risk_status", "gravity_feasibility_pct", "stability_status", "stability_score", "ksat_mm_per_hour", "basin_feasibility", "geometry"], geometry="geometry", crs=EUHYDRO_CRS),
-        )
-
-    egms_points = None
-    if egms_ortho_vertical:
-        try:
-            egms_points = load_egms_ortho_vertical_points(egms_ortho_vertical)
-        except Exception:
-            egms_points = None
-
-    canal_features = []
-    site_features = []
-    with rasterio.open(terrain_dem_raster) as src:
-        with WarpedVRT(src, crs=EUHYDRO_CRS) as vrt:
-            dem = vrt.read(1, masked=True).astype("float32").filled(np.nan)
-            transform = vrt.transform
-
-            basin_candidates = _find_basin_candidates(dem, transform)
-            for _, demand in high_risk.iterrows():
-                if pd.isna(demand.get("supply_sample_x")) or pd.isna(demand.get("supply_sample_y")):
-                    continue
-                supply_point = Point(float(demand["supply_sample_x"]), float(demand["supply_sample_y"]))
-                demand_point = _analysis_point(demand.geometry)
-                canal_line, gravity_pct = _least_cost_canal_path(dem, transform, supply_point, demand_point)
-                if canal_line is not None:
-                    canal_features.append(
-                        {
-                            "risk_status": demand["water_risk"],
-                            "gravity_feasibility_pct": gravity_pct,
-                            "distance_to_source_m": demand["distance_to_source_m"],
-                            "geometry": canal_line,
-                        }
-                    )
-                basin_point = _nearest_basin_candidate(demand_point, basin_candidates)
-                if basin_point is None:
-                    continue
-                lon, lat = Transformer.from_crs(EUHYDRO_CRS, WGS84_CRS, always_xy=True).transform(basin_point.x, basin_point.y)
-                ksat_mm_per_hour = None
-                basin_feasibility = "Unknown"
-                try:
-                    soil = query_soilgrids_textures(lat, lon)
-                    ksat_mm_per_hour = soil.ksat_mm_per_hour
-                    basin_feasibility = "Ideal natural basin" if (ksat_mm_per_hour is not None and ksat_mm_per_hour * 24.0 < 100.0) else "Permeability mitigation needed"
-                except Exception:
-                    basin_feasibility = "Soil query unavailable"
-
-                stability_status = None
-                stability_score = None
-                stability_velocity = None
-                if egms_points is not None and not egms_points.empty:
-                    nearby = egms_points[egms_points.geometry.intersects(basin_point.buffer(stability_buffer_m))]
-                    if not nearby.empty:
-                        stability_velocity = float(nearby["mean_velocity_mm_per_year"].mean())
-                        stability_status, stability_score = classify_stability(stability_velocity)
-
-                site_features.append(
-                    {
-                        "site_type": "reservoir_site",
-                        "risk_status": demand["water_risk"],
-                        "gravity_feasibility_pct": gravity_pct,
-                        "stability_status": stability_status,
-                        "stability_score": stability_score,
-                        "stability_velocity_mm_per_year": stability_velocity,
-                        "ksat_mm_per_hour": ksat_mm_per_hour,
-                        "basin_feasibility": basin_feasibility,
-                        "stability_warning": (
-                            "High risk of joint separation and leaking due to differential ground motion."
-                            if stability_velocity is not None and abs(stability_velocity) > differential_motion_threshold_mm_per_year
-                            else None
-                        ),
-                        "geometry": basin_point,
-                    }
-                )
-
-    canals = gpd.GeoDataFrame(canal_features, geometry="geometry", crs=EUHYDRO_CRS) if canal_features else gpd.GeoDataFrame(columns=["gravity_feasibility_pct", "risk_status", "geometry"], geometry="geometry", crs=EUHYDRO_CRS)
-    sites = gpd.GeoDataFrame(site_features, geometry="geometry", crs=EUHYDRO_CRS) if site_features else gpd.GeoDataFrame(columns=["site_type", "risk_status", "gravity_feasibility_pct", "stability_status", "stability_score", "ksat_mm_per_hour", "basin_feasibility", "geometry"], geometry="geometry", crs=EUHYDRO_CRS)
-    return canals, sites
-
-
-def _find_basin_candidates(dem: np.ndarray, transform, max_candidates: int = 50) -> list[Point]:
-    finite = np.isfinite(dem)
-    if not finite.any():
-        return []
-    from scipy.ndimage import minimum_filter
-
-    working = np.where(finite, dem, np.nanmax(dem[finite]) + 1000.0)
-    local_min = working <= minimum_filter(working, size=9, mode="nearest")
-    rows, cols = np.where(local_min & finite)
-    if rows.size == 0:
-        return []
-    order = np.argsort(working[rows, cols])
-    candidates = []
-    for idx in order[:max_candidates]:
-        x, y = xy(transform, int(rows[idx]), int(cols[idx]))
-        candidates.append(Point(float(x), float(y)))
-    return candidates
-
-
-def _nearest_basin_candidate(demand_point: Point, candidates: list[Point]) -> Point | None:
-    if not candidates:
-        return None
-    return min(candidates, key=lambda point: demand_point.distance(point))
-
-
-def _analysis_point(geometry) -> Point:
-    if geometry.geom_type == "Point":
-        return geometry
-    point = geometry.representative_point()
-    return Point(float(point.x), float(point.y))
-
-
-def _least_cost_canal_path(dem: np.ndarray, transform, source_point: Point, target_point: Point) -> tuple[LineString | None, float | None]:
-    finite = np.isfinite(dem)
-    if not finite.any():
-        return None, None
-    try:
-        source_row, source_col = rowcol(transform, source_point.x, source_point.y)
-        target_row, target_col = rowcol(transform, target_point.x, target_point.y)
-    except Exception:
-        return None, None
-
-    nrows, ncols = dem.shape
-    if not (0 <= source_row < nrows and 0 <= source_col < ncols and 0 <= target_row < nrows and 0 <= target_col < ncols):
-        return None, None
-
-    distances = np.full((nrows, ncols), np.inf, dtype="float64")
-    previous: dict[tuple[int, int], tuple[int, int] | None] = {(source_row, source_col): None}
-    heap: list[tuple[float, int, int]] = [(0.0, source_row, source_col)]
-    distances[source_row, source_col] = 0.0
-    neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-
-    while heap:
-        cost, row, col = heapq.heappop(heap)
-        if cost > distances[row, col]:
-            continue
-        if (row, col) == (target_row, target_col):
-            break
-        current_elev = dem[row, col]
-        if not np.isfinite(current_elev):
-            continue
-        for drow, dcol in neighbors:
-            nr, nc = row + drow, col + dcol
-            if nr < 0 or nc < 0 or nr >= nrows or nc >= ncols:
-                continue
-            next_elev = dem[nr, nc]
-            if not np.isfinite(next_elev):
-                continue
-            step_dist = float(np.hypot(drow, dcol))
-            uphill = max(0.0, next_elev - current_elev)
-            step_cost = step_dist * (1.0 + uphill * 0.25)
-            new_cost = cost + step_cost
-            if new_cost < distances[nr, nc]:
-                distances[nr, nc] = new_cost
-                previous[(nr, nc)] = (row, col)
-                heapq.heappush(heap, (new_cost, nr, nc))
-
-    if not np.isfinite(distances[target_row, target_col]):
-        return None, None
-
-    path_cells = []
-    cursor = (target_row, target_col)
-    while cursor is not None:
-        path_cells.append(cursor)
-        cursor = previous.get(cursor)
-    path_cells.reverse()
-    if len(path_cells) < 2:
-        return None, 100.0
-    coords = [xy(transform, row, col) for row, col in path_cells]
-    line = LineString([(float(x), float(y)) for x, y in coords])
-    uphill_steps = 0
-    for (row_a, col_a), (row_b, col_b) in zip(path_cells[:-1], path_cells[1:]):
-        elev_a = dem[row_a, col_a]
-        elev_b = dem[row_b, col_b]
-        if np.isfinite(elev_a) and np.isfinite(elev_b) and elev_b > elev_a:
-            uphill_steps += 1
-    gravity_feasibility = max(0.0, 100.0 * (1.0 - uphill_steps / max(len(path_cells) - 1, 1)))
-    return line, round(gravity_feasibility, 1)
