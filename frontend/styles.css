@@ -112,13 +112,16 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 18px;
+  padding: 12px 18px;
   margin-bottom: 24px;
   border-radius: 16px;
   border: 1px solid rgba(18, 56, 44, 0.12);
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(12px);
   box-shadow: var(--shadow-sm);
+  position: sticky;
+  top: 12px;
+  z-index: 1000;
 }
 
 .brand {
@@ -649,27 +652,27 @@ button {
 .tab-strip {
   display: flex;
   width: fit-content;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.68);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.4);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-md);
 }
 
 .tab-btn {
-  padding: 10px 24px;
-  border-radius: 12px;
+  padding: 8px 18px;
+  border-radius: 9px;
   text-transform: capitalize;
   font-weight: 500;
-  font-size: 14px;
+  font-size: 13px;
+  border: 1px solid transparent;
 }
 
 .tab-btn.is-active {
   color: #fffdf8;
   background: linear-gradient(135deg, var(--accent), var(--accent-strong));
   border-color: transparent;
-  box-shadow: 0 12px 24px rgba(31, 124, 255, 0.18);
+  box-shadow: 0 4px 12px rgba(31, 124, 255, 0.18);
 }
 
 .tab-panel {

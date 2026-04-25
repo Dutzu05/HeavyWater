@@ -56,6 +56,12 @@
           <span class="brand-tagline">Nature-first preview studio</span>
         </span>
       </a>
+
+      <div class="tab-strip" role="tablist" aria-label="Workspace tabs">
+        <button class="tab-btn is-active" type="button" data-tab-target="map-panel">Map</button>
+        <button class="tab-btn" type="button" data-tab-target="preview-panel">Preview</button>
+        <button class="tab-btn" type="button" data-tab-target="insights-panel">Data</button>
+      </div>
     </header>
 
     <main class="planner" id="planner">
@@ -178,12 +184,6 @@
         </div>
 
         <section class="workspace-shell">
-          <div class="tab-strip" role="tablist" aria-label="Workspace tabs">
-            <button class="tab-btn is-active" type="button" data-tab-target="map-panel">Map</button>
-            <button class="tab-btn" type="button" data-tab-target="preview-panel">Preview</button>
-            <button class="tab-btn" type="button" data-tab-target="insights-panel">Data</button>
-          </div>
-
           <div class="tab-panel is-active panel-card" id="map-panel">
             <div class="card-head">
               <div>
