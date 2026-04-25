@@ -41,6 +41,7 @@ POLYGON_LAYERS = ("InlandWater", "River_Net_p", "Canals_p", "Ditches_p", "Coasta
 BASIN_LAYERS = ("RiverBasins",)
 
 PLANETARY_COMPUTER_STAC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
+OVERPASS_API_URL = "https://overpass-api.de/api/interpreter"
 SENTINEL1_GRD_COLLECTION = "sentinel-1-grd"
 SAR_DEFAULT_POLARIZATION = "vv"
 CDSE_SENTINELHUB_PROCESS_URL = "https://sh.dataspace.copernicus.eu/api/v1/process"
@@ -48,12 +49,11 @@ CDSE_TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/prot
 CDSE_CLIENT_ID_ENV_VARS = ("CDSE_CLIENT_ID", "COPERNICUS_DATASPACE_CLIENT_ID")
 CDSE_CLIENT_SECRET_ENV_VARS = ("CDSE_CLIENT_SECRET", "COPERNICUS_DATASPACE_CLIENT_SECRET")
 TERRAIN_DEM_INSTANCE = "COPERNICUS_30"
-OVERPASS_API_URL = "https://overpass-api.de/api/interpreter"
+
+DEFAULT_BBOX_SIZE_KM = 20.0
 WATER_SOURCE_EUHYDRO = "euhydro"
 WATER_SOURCE_OVERPASS = "overpass"
 DEFAULT_WATER_SOURCE = WATER_SOURCE_OVERPASS
-
-DEFAULT_BBOX_SIZE_KM = 20.0
 DEFAULT_URBAN_THRESHOLD_DB = -10.0
 DEFAULT_BUFFER_METERS = 500.0
 DEFAULT_MIN_CLUSTER_AREA_M2 = 20_000.0

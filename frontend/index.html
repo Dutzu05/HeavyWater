@@ -3,127 +3,202 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>HeavyWater Preview Studio</title>
+  <title>HeavyWater</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+  <div class="page-bg">
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <div class="orb orb-c"></div>
+    <div class="grain"></div>
+  </div>
+
   <div class="shell">
-    <section class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">HeavyWater Preview Studio</p>
-        <h1>Pick a place, tune the scene, generate the water preview.</h1>
-        <p class="lede">
-          Use the interactive planner to set coordinates, click directly on the map, and launch a fresh HeavyWater render without leaving the browser.
-        </p>
-        <div class="hero-actions">
-          <button class="primary-btn" type="button" data-scroll-target="#planner">Start Planning</button>
-          <button class="ghost-btn" type="button" id="load-current-preview">Open Current Preview</button>
-        </div>
-      </div>
-      <div class="hero-panel">
-        <div class="hero-card">
-          <span class="card-label">Quick actions</span>
-          <button class="quick-button" type="button" data-preset="cluj">Cluj-Napoca</button>
-          <button class="quick-button" type="button" data-preset="danube">Danube Delta</button>
-          <button class="quick-button" type="button" data-preset="iasi">Iasi</button>
-          <button class="quick-button" type="button" id="use-map-center">Use Map Center</button>
-        </div>
-      </div>
-    </section>
+    <header class="topbar" aria-label="HeavyWater header">
+      <a class="brand" href="#" aria-label="HeavyWater home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="38" height="38" role="img" focusable="false">
+            <defs>
+              <linearGradient id="hwDrop" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#7fe6ff"/>
+                <stop offset="0.55" stop-color="#2fb8ff"/>
+                <stop offset="1" stop-color="#1a6bff"/>
+              </linearGradient>
+              <linearGradient id="hwSteel" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#2a4b46"/>
+                <stop offset="1" stop-color="#0e1b1a"/>
+              </linearGradient>
+              <filter id="hwSoftShadow" x="-40%" y="-40%" width="180%" height="180%">
+                <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="rgba(9, 27, 20, 0.28)"/>
+              </filter>
+            </defs>
+            <g filter="url(#hwSoftShadow)">
+              <!-- anvil -->
+              <path d="M14 28.5c0-2.8 2.4-5.1 5.2-5.1h8.6v-4.2c0-3 2.5-5.5 5.5-5.5s5.5 2.5 5.5 5.5v4.2h8.5c2.8 0 5.2 2.3 5.2 5.1v4.2c0 1.9-1.2 3.5-3.2 4.2l-8.4 2.6 2.4 7.7c.6 2-1 4-3.1 4H23.5c-2.1 0-3.7-2-3.1-4l2.4-7.7-8.4-2.6c-2-.7-3.2-2.3-3.2-4.2v-4.2z"
+                    fill="url(#hwSteel)" opacity="0.98"/>
+              <path d="M22.8 23.4h18.4" stroke="rgba(14,27,26,0.18)" stroke-width="2" stroke-linecap="round"/>
+              <path d="M25 40.8h14" stroke="rgba(14,27,26,0.16)" stroke-width="2" stroke-linecap="round"/>
+              <!-- drop -->
+              <path d="M32 6s11.2 12.4 11.2 22.6c0 6.6-4.7 12-11.2 12s-11.2-5.4-11.2-12C20.8 18.4 32 6 32 6z"
+                    fill="url(#hwDrop)" opacity="0.96"/>
+              <path d="M36.7 17.8c2.2 3.1 3.7 6.3 3.7 9 0 5.3-3 9.4-6.9 10.6"
+                    fill="none" stroke="rgba(255,255,255,0.58)" stroke-width="2.6" stroke-linecap="round"/>
+            </g>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">HeavyWater</span>
+          <span class="brand-tagline">Nature-first preview studio</span>
+        </span>
+      </a>
+    </header>
 
-    <main class="workspace" id="planner">
-      <section class="control-panel">
-        <div class="panel-header">
-          <p class="eyebrow">Interactive Menu</p>
-          <h2>Coordinate Planner</h2>
-        </div>
-
-        <form id="generator-form" class="generator-form">
-          <label>
-            <span>Latitude</span>
-            <input id="lat-input" name="lat" type="number" step="any" required>
-          </label>
-          <label>
-            <span>Longitude</span>
-            <input id="lon-input" name="lon" type="number" step="any" required>
-          </label>
-          <label>
-            <span>AOI size (km)</span>
-            <input id="size-input" name="size_km" type="number" min="1" step="0.5">
-          </label>
-          <label>
-            <span>Water source</span>
-            <select id="water-source" name="water_source">
-              <option value="overpass">OpenStreetMap Overpass</option>
-              <option value="euhydro">Local EuHydro</option>
-            </select>
-          </label>
-          <label class="wide">
-            <span>Communities raster (optional path)</span>
-            <input id="communities-raster" name="communities_raster" type="text" placeholder="C:\path\to\raster.tif">
-          </label>
-          <label>
-            <span>Community threshold</span>
-            <input id="threshold-input" name="community_threshold" type="number" min="0" step="1">
-          </label>
-          <label>
-            <span>Min community area (m²)</span>
-            <input id="min-area-input" name="min_community_area_m2" type="number" min="0" step="100">
-          </label>
-          <label>
-            <span>Terrain resolution (m)</span>
-            <input id="terrain-resolution-input" name="terrain_resolution_m" type="number" min="1" step="1">
-          </label>
-
-          <label class="toggle">
-            <input id="terrain-toggle" name="terrain" type="checkbox">
-            <span>Include terrain overlay</span>
-          </label>
-
-          <div class="button-row">
-            <button class="primary-btn" id="generate-btn" type="submit">Generate View</button>
-            <button class="ghost-btn" id="reset-btn" type="button">Reset</button>
+    <main class="planner" id="planner">
+      <section class="control-shell">
+        <div class="panel-card control-panel">
+          <div class="panel-header">
+            <p class="eyebrow">Interactive Menu</p>
+            <h2>Control Panel</h2>
+            <p class="panel-copy">Set the target area, choose the data source, and launch a new preview from the existing backend.</p>
           </div>
-        </form>
 
-        <div class="status-card">
-          <p class="status-label">Status</p>
-          <p id="status-text">Loading preview state...</p>
-          <div class="mini-actions">
-            <button class="chip-btn" type="button" id="copy-coords">Copy Coordinates</button>
-            <button class="chip-btn" type="button" id="open-preview-tab">Open Preview Tab</button>
-          </div>
-        </div>
-      </section>
+          <form id="generator-form" class="generator-form">
+            <label>
+              <span>Latitude</span>
+              <input id="lat-input" name="lat" type="number" step="any" required>
+            </label>
+            <label>
+              <span>Longitude</span>
+              <input id="lon-input" name="lon" type="number" step="any" required>
+            </label>
+            <label>
+              <span>AOI size (km)</span>
+              <input id="size-input" name="size_km" type="number" min="1" step="0.5">
+            </label>
+            <label>
+              <span>Water source</span>
+              <select id="water-source" name="water_source">
+                <option value="overpass">OpenStreetMap Overpass</option>
+                <option value="euhydro">Local EuHydro</option>
+              </select>
+            </label>
+            <label class="wide">
+              <span>Communities raster</span>
+              <input id="communities-raster" name="communities_raster" type="text" placeholder="C:\path\to\raster.tif">
+            </label>
+            <label>
+              <span>Community threshold</span>
+              <input id="threshold-input" name="community_threshold" type="number" min="0" step="1">
+            </label>
+            <label>
+              <span>Min area (m2)</span>
+              <input id="min-area-input" name="min_community_area_m2" type="number" min="0" step="100">
+            </label>
+            <label>
+              <span>Terrain resolution (m)</span>
+              <input id="terrain-resolution-input" name="terrain_resolution_m" type="number" min="1" step="1">
+            </label>
 
-      <section class="map-panel">
-        <div class="map-card">
-          <div class="map-card-header">
-            <div>
-              <p class="eyebrow">Selection Map</p>
-              <h2>Click anywhere to set the target place</h2>
+            <label class="toggle-row wide">
+              <span class="toggle-copy">
+                <strong>Terrain overlay</strong>
+                <small>Include topographic data in the generated preview.</small>
+              </span>
+              <span class="toggle-switch">
+                <input id="terrain-toggle" name="terrain" type="checkbox">
+                <span class="toggle-track"></span>
+              </span>
+            </label>
+
+            <div class="button-row">
+              <button class="primary-btn" id="generate-btn" type="submit">Generate View</button>
+              <button class="ghost-btn" id="reset-btn" type="button">Reset</button>
             </div>
-            <p id="live-coords" class="mono"></p>
-          </div>
-          <div id="selection-map" aria-label="Coordinate selection map"></div>
+          </form>
         </div>
 
-        <div class="preview-card">
-          <div class="preview-header">
-            <div>
-              <p class="eyebrow">Generated View</p>
-              <h2>Preview Output</h2>
-            </div>
-            <button class="ghost-btn" id="refresh-preview" type="button">Refresh Frame</button>
+        <section class="workspace-shell">
+          <div class="tab-strip" role="tablist" aria-label="Workspace tabs">
+            <button class="tab-btn is-active" type="button" data-tab-target="map-panel">Map</button>
+            <button class="tab-btn" type="button" data-tab-target="preview-panel">Preview</button>
+            <button class="tab-btn" type="button" data-tab-target="insights-panel">Data</button>
           </div>
-          <iframe id="preview-frame" title="HeavyWater generated preview"></iframe>
-        </div>
+
+          <div class="tab-panel is-active panel-card" id="map-panel">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Interactive Map</p>
+                <h2>Click anywhere to set the target place</h2>
+              </div>
+              <p id="live-coords" class="mono"></p>
+            </div>
+            <div id="selection-map" aria-label="Coordinate selection map"></div>
+          </div>
+
+          <div class="tab-panel panel-card" id="preview-panel">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Generated View</p>
+                <h2>Preview Output</h2>
+              </div>
+              <button class="ghost-btn" id="refresh-preview" type="button">Refresh Frame</button>
+            </div>
+            <iframe id="preview-frame" title="HeavyWater generated preview"></iframe>
+            <div class="metric-grid">
+              <article class="metric-card">
+                <span>Source</span>
+                <strong id="metric-water-source">Overpass</strong>
+              </article>
+              <article class="metric-card">
+                <span>AOI</span>
+                <strong id="metric-size">20 km</strong>
+              </article>
+              <article class="metric-card">
+                <span>Terrain</span>
+                <strong id="metric-terrain">Off</strong>
+              </article>
+            </div>
+          </div>
+
+          <div class="tab-panel panel-card" id="insights-panel">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Studio Notes</p>
+                <h2>Preview configuration summary</h2>
+              </div>
+            </div>
+            <div class="insights-grid">
+              <article class="insight-card">
+                <span class="insight-label">Water Bodies</span>
+                <strong id="insight-water-source">OpenStreetMap Overpass</strong>
+                <p>Matches the backend `water_source` option exposed by the local preview server.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Communities Raster</span>
+                <strong id="insight-raster">Not set</strong>
+                <p>Optional local GeoTIFF path used to derive community polygons for the output map.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Threshold</span>
+                <strong id="insight-threshold">1</strong>
+                <p>Controls how aggressively the raster is filtered before communities are extracted.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Minimum Area</span>
+                <strong id="insight-min-area">2000 m2</strong>
+                <p>Small isolated shapes below this limit are removed from the generated community layer.</p>
+              </article>
+            </div>
+          </div>
+        </section>
       </section>
     </main>
+
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>

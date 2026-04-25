@@ -1,7 +1,5 @@
 const presets = {
   cluj: { lat: 46.7712, lon: 23.6236, label: "Cluj-Napoca" },
-  danube: { lat: 45.1524, lon: 29.6531, label: "Danube Delta" },
-  iasi: { lat: 47.1585, lon: 27.6014, label: "Iasi" },
 };
 
 const state = {
@@ -22,6 +20,15 @@ const previewFrame = document.querySelector("#preview-frame");
 const statusText = document.querySelector("#status-text");
 const liveCoords = document.querySelector("#live-coords");
 const generateBtn = document.querySelector("#generate-btn");
+const metricWaterSource = document.querySelector("#metric-water-source");
+const metricSize = document.querySelector("#metric-size");
+const metricTerrain = document.querySelector("#metric-terrain");
+const insightWaterSource = document.querySelector("#insight-water-source");
+const insightRaster = document.querySelector("#insight-raster");
+const insightThreshold = document.querySelector("#insight-threshold");
+const insightMinArea = document.querySelector("#insight-min-area");
+const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
+const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
 
 const map = L.map("selection-map", {
   zoomControl: true,
@@ -52,6 +59,30 @@ function setStatus(message, isError = false) {
   statusText.style.color = isError ? "#8f1d14" : "";
 }
 
+function formatWaterSource(value) {
+  return value === "euhydro" ? "Local EuHydro" : "OpenStreetMap Overpass";
+}
+
+function selectTab(targetId) {
+  tabButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.tabTarget === targetId);
+  });
+  tabPanels.forEach((panel) => {
+    panel.classList.toggle("is-active", panel.id === targetId);
+  });
+}
+
+function syncSummary(payload) {
+  const waterSourceLabel = formatWaterSource(payload.water_source);
+  metricWaterSource.textContent = payload.water_source === "euhydro" ? "EuHydro" : "Overpass";
+  metricSize.textContent = `${payload.size_km} km`;
+  metricTerrain.textContent = payload.terrain ? "On" : "Off";
+  insightWaterSource.textContent = waterSourceLabel;
+  insightRaster.textContent = payload.communities_raster || "Not set";
+  insightThreshold.textContent = String(payload.community_threshold);
+  insightMinArea.textContent = `${payload.min_community_area_m2} m²`;
+}
+
 async function loadStatus() {
   const response = await fetch("/api/status");
   const payload = await response.json();
@@ -61,6 +92,14 @@ async function loadStatus() {
   thresholdInput.value = payload.defaults.community_threshold;
   minAreaInput.value = payload.defaults.min_community_area_m2;
   terrainResolutionInput.value = payload.defaults.terrain_resolution_m;
+  syncSummary({
+    water_source: payload.defaults.water_source,
+    size_km: payload.defaults.size_km,
+    terrain: terrainToggle.checked,
+    communities_raster: rasterInput.value.trim(),
+    community_threshold: payload.defaults.community_threshold,
+    min_community_area_m2: payload.defaults.min_community_area_m2,
+  });
 
   if (payload.has_preview && payload.preview_url) {
     state.previewUrl = payload.preview_url;
@@ -88,6 +127,8 @@ function readPayload() {
 async function generatePreview(event) {
   event.preventDefault();
   const payload = readPayload();
+  syncSummary(payload);
+  selectTab("preview-panel");
   generateBtn.disabled = true;
   generateBtn.textContent = "Generating...";
   setStatus(`Generating preview for ${payload.lat.toFixed(5)}, ${payload.lon.toFixed(5)}...`);
@@ -105,6 +146,7 @@ async function generatePreview(event) {
     state.previewUrl = result.index_url;
     previewFrame.src = `${result.index_url}?t=${Date.now()}`;
     setStatus(`Preview ready for ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}.`);
+    selectTab("preview-panel");
   } catch (error) {
     setStatus(error.message, true);
   } finally {
@@ -133,16 +175,9 @@ function resetForm() {
   setCoordinates(preset.lat, preset.lon, { zoom: 10 });
   rasterInput.value = "";
   terrainToggle.checked = false;
+  syncSummary(readPayload());
   setStatus("Planner reset to the default location.");
 }
-
-document.querySelectorAll("[data-preset]").forEach((button) => {
-  button.addEventListener("click", () => {
-    const preset = presets[button.dataset.preset];
-    setCoordinates(preset.lat, preset.lon, { zoom: 10 });
-    setStatus(`Preset loaded: ${preset.label}.`);
-  });
-});
 
 document.querySelectorAll("[data-scroll-target]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -151,18 +186,14 @@ document.querySelectorAll("[data-scroll-target]").forEach((button) => {
   });
 });
 
-document.querySelector("#load-current-preview").addEventListener("click", () => {
-  document.querySelector(".preview-card").scrollIntoView({ behavior: "smooth", block: "start" });
+document.querySelectorAll("[data-action=\"load-current-preview\"]").forEach((button) => {
+  button.addEventListener("click", () => {
+  document.querySelector("#preview-panel").scrollIntoView({ behavior: "smooth", block: "start" });
   if (state.previewUrl) {
     previewFrame.src = `${state.previewUrl}?t=${Date.now()}`;
     setStatus("Current preview refreshed.");
   }
 });
-
-document.querySelector("#use-map-center").addEventListener("click", () => {
-  const center = map.getCenter();
-  setCoordinates(center.lat, center.lng, { pan: false });
-  setStatus("Map center applied to the coordinate inputs.");
 });
 
 document.querySelector("#copy-coords").addEventListener("click", copyCoordinates);
@@ -176,6 +207,9 @@ document.querySelector("#refresh-preview").addEventListener("click", () => {
   setStatus("Preview frame refreshed.");
 });
 document.querySelector("#reset-btn").addEventListener("click", resetForm);
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => selectTab(button.dataset.tabTarget));
+});
 
 form.addEventListener("submit", generatePreview);
 
@@ -198,6 +232,10 @@ marker.on("dragend", (event) => {
       setCoordinates(lat, lon, { zoom: map.getZoom() });
     }
   });
+});
+
+[sizeInput, waterSourceInput, rasterInput, thresholdInput, minAreaInput, terrainToggle].forEach((input) => {
+  input.addEventListener("change", () => syncSummary(readPayload()));
 });
 
 setCoordinates(46.7712, 23.6236, { zoom: 8 });
