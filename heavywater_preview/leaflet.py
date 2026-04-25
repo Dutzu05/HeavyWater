@@ -45,9 +45,11 @@ def write_preview_map(
 
     rivers_group = folium.FeatureGroup(name="Rivers", show=True)
     if not water_lines.empty:
+        river_popup_fields, river_popup_aliases = _river_popup_fields(water_lines)
         folium.GeoJson(
-            data=json.loads(water_lines.to_crs("EPSG:4326").to_json(default=str)),
+            data=json.loads(_format_river_properties(water_lines).to_crs("EPSG:4326").to_json(default=str)),
             style_function=lambda _: {"color": "#0057ff", "weight": 4, "opacity": 0.95},
+            popup=folium.GeoJsonPopup(fields=river_popup_fields, aliases=river_popup_aliases, localize=True, labels=True),
         ).add_to(rivers_group)
     rivers_group.add_to(fmap)
 
@@ -181,3 +183,93 @@ def _terrain_click_script(map_name: str, terrain_query_data: dict) -> str:
   attachTerrainClick();
 }})();
 """.strip()
+
+
+def _format_river_properties(water_lines):
+    enriched = water_lines.copy()
+    formatters = {
+        "observed_width_m": _format_width,
+        "discharge_m3s": _format_discharge,
+        "daily_flow_volume_m3": _format_daily_volume,
+        "quantity_score": _format_score,
+        "river_length_m": _format_generic,
+    }
+    for column, formatter in formatters.items():
+        if column in enriched.columns:
+            enriched[column] = enriched[column].map(formatter)
+    return enriched
+
+
+def _river_popup_fields(water_lines) -> tuple[list[str], list[str]]:
+    score_alias = _score_alias(water_lines)
+    has_discharge = _has_real_values(water_lines, "discharge_m3s")
+    has_daily_volume = _has_real_values(water_lines, "daily_flow_volume_m3")
+    candidates = [
+        ("observed_width_m", "Width (m)"),
+        ("quantity_score", score_alias),
+    ]
+    if has_daily_volume:
+        candidates.insert(1, ("daily_flow_volume_m3", "Water quantity (m3/day)"))
+    if has_discharge:
+        insert_at = 1 if not has_daily_volume else 2
+        candidates.insert(insert_at, ("discharge_m3s", "Flow rate (m3/s)"))
+    fields = []
+    aliases = []
+    for field, alias in candidates:
+        if field not in water_lines.columns:
+            continue
+        if water_lines[field].notna().any() or field in {"observed_width_m", "quantity_score"}:
+            fields.append(field)
+            aliases.append(alias)
+    return fields, aliases
+
+
+def _score_alias(water_lines) -> str:
+    if "score_label" not in water_lines.columns or water_lines["score_label"].dropna().empty:
+        return "Score (0-1, relative in this map)"
+    labels = water_lines["score_label"].dropna().astype(str)
+    if labels.empty:
+        return "Score (0-1, relative in this map)"
+    return labels.mode().iloc[0]
+
+
+def _has_real_values(water_lines, column: str) -> bool:
+    if column not in water_lines.columns:
+        return False
+    series = water_lines[column]
+    return bool(series.notna().any())
+
+
+def _format_width(value):
+    return _format_numeric(value, decimals=2)
+
+
+def _format_daily_volume(value):
+    return _format_numeric(value, decimals=2)
+
+
+def _format_score(value):
+    return _format_numeric(value, decimals=2)
+
+
+def _format_generic(value):
+    return _format_numeric(value, decimals=2)
+
+
+def _format_discharge(value):
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    numeric = float(value)
+    if numeric == 0.0:
+        return "0"
+    if abs(numeric) < 0.01:
+        return f"{numeric:.4f}"
+    if abs(numeric) < 1.0:
+        return f"{numeric:.3f}"
+    return f"{numeric:.2f}"
+
+
+def _format_numeric(value, decimals: int) -> str:
+    if value is None or not np.isfinite(value):
+        return "n/a"
+    return f"{float(value):.{decimals}f}"

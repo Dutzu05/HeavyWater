@@ -10,6 +10,9 @@ from heavywater_preview.config import (
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_EFAS_DAYS_BACK,
+    DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
+    DEFAULT_RIVER_METRIC_RESOLUTION_M,
     DEFAULT_TERRAIN_RESOLUTION_M,
     EUHYDRO_DATA_DIR,
     INDEX_HTML_NAME,
@@ -23,6 +26,7 @@ from heavywater_preview.config import (
 from heavywater_preview.impervious import communities_from_impervious_raster, write_community_layers
 from heavywater_preview.leaflet import write_preview_map
 from heavywater_preview.qgis_project import write_qgs_project
+from heavywater_preview.river_metrics import enrich_rivers_with_metrics
 from heavywater_preview.terrain import TerrainResult, fetch_terrain_for_aoi
 from heavywater_preview.water import collect_water_layers, write_water_layers
 
@@ -50,6 +54,11 @@ def run_pipeline(
     min_community_area_m2: float = DEFAULT_MIN_COMMUNITY_AREA_M2,
     include_terrain: bool = False,
     terrain_resolution_m: float = DEFAULT_TERRAIN_RESOLUTION_M,
+    include_river_metrics: bool = False,
+    include_river_discharge: bool = False,
+    river_metric_resolution_m: float = DEFAULT_RIVER_METRIC_RESOLUTION_M,
+    river_metric_lookback_days: int = DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
+    efas_days_back: int = DEFAULT_EFAS_DAYS_BACK,
 ) -> PipelineOutputs:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -64,6 +73,17 @@ def run_pipeline(
     aoi_euhydro = reproject_bounds_to_euhydro(bbox_wgs84)
 
     water_lines, water_polygons, river_basins = collect_water_layers(EUHYDRO_DATA_DIR, aoi_euhydro)
+    if include_river_metrics:
+        metric_result = enrich_rivers_with_metrics(
+            water_lines=water_lines,
+            bbox_wgs84=bbox_wgs84,
+            output_dir=output_dir,
+            metric_resolution_m=river_metric_resolution_m,
+            lookback_days=river_metric_lookback_days,
+            efas_days_back=efas_days_back,
+            include_discharge=include_river_discharge,
+        )
+        water_lines = metric_result.river_lines
     water_gpkg = output_dir / WATER_GPKG_NAME
     write_water_layers(water_lines, water_polygons, river_basins, water_gpkg)
 

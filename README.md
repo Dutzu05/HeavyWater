@@ -4,6 +4,8 @@ Local Python pipeline for:
 - clipping nearby EuHydro water bodies for a `lat, lon` AOI
 - extracting community polygons from a Copernicus imperviousness or built-up GeoTIFF
 - fetching Copernicus GLO-30 terrain for the AOI through the Copernicus Data Space Sentinel Hub Process API
+- estimating river width from Sentinel-1 and Sentinel-2 water masks
+- attaching EFAS discharge and daily flow volume to rivers
 - generating a Folium preview map and a basic QGIS project
 
 ## Project Layout
@@ -69,3 +71,27 @@ This writes:
 - `output\terrain_dem.tif`: fetched DEM
 - `output\terrain_hillshade.tif`: terrain hillshade used in the map
 - `output\terrain_summary.json`: min/max/mean elevation and slope summary
+
+To enrich rivers with satellite-derived width:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --river-metrics
+```
+
+This writes river-metric support files such as:
+- `output\sentinel1_water_mask.tif`
+- `output\sentinel2_water_mask.tif`
+- `output\observed_water_mask.tif`
+
+To also request EFAS discharge:
+
+```powershell
+python .\extract_water_preview.py 46.66 23.69 --river-metrics --river-discharge
+```
+
+This may take significantly longer because EFAS retrieval is remote and can involve a large Europe-wide product. If it succeeds, it also writes:
+- `output\efas_discharge_latest.nc`
+
+Notes:
+- Sentinel-1, Sentinel-2, and terrain use your Copernicus Data Space OAuth client from `.env` or the current PowerShell session.
+- EFAS discharge uses the EWDS API through `cdsapi`, so you also need either a working `~/.cdsapirc` for EWDS or `EWDS_API_URL` and `EWDS_API_KEY` in `.env`, plus accepted dataset terms for `efas-historical`.

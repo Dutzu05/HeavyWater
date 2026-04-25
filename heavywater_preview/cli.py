@@ -7,8 +7,11 @@ from pathlib import Path
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
     DEFAULT_COMMUNITY_THRESHOLD,
+    DEFAULT_EFAS_DAYS_BACK,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
+    DEFAULT_RIVER_METRIC_RESOLUTION_M,
     DEFAULT_TERRAIN_RESOLUTION_M,
     PROJECT_ROOT,
 )
@@ -49,6 +52,34 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TERRAIN_RESOLUTION_M,
         help="Requested terrain raster resolution in meters for the fetched DEM.",
     )
+    parser.add_argument(
+        "--river-metrics",
+        action="store_true",
+        help="Fetch Sentinel-1/Sentinel-2 water masks to enrich rivers with observed width metrics.",
+    )
+    parser.add_argument(
+        "--river-discharge",
+        action="store_true",
+        help="Also fetch EFAS discharge. This can take much longer than width extraction.",
+    )
+    parser.add_argument(
+        "--river-metric-resolution-m",
+        type=float,
+        default=DEFAULT_RIVER_METRIC_RESOLUTION_M,
+        help="Requested Sentinel-1/Sentinel-2 raster resolution in meters for width extraction.",
+    )
+    parser.add_argument(
+        "--river-lookback-days",
+        type=int,
+        default=DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
+        help="How many recent days of Sentinel-1/Sentinel-2 scenes to search for width extraction.",
+    )
+    parser.add_argument(
+        "--efas-days-back",
+        type=int,
+        default=DEFAULT_EFAS_DAYS_BACK,
+        help="How many days back from today to request EFAS historical discharge.",
+    )
     return parser
 
 
@@ -65,6 +96,11 @@ def main() -> None:
         min_community_area_m2=args.min_community_area_m2,
         include_terrain=args.terrain,
         terrain_resolution_m=args.terrain_resolution_m,
+        include_river_metrics=args.river_metrics,
+        include_river_discharge=args.river_discharge,
+        river_metric_resolution_m=args.river_metric_resolution_m,
+        river_metric_lookback_days=args.river_lookback_days,
+        efas_days_back=args.efas_days_back,
     )
     print(str(outputs.map_html_path))
 
