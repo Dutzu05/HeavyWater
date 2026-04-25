@@ -6,13 +6,17 @@ from typing import Iterable
 import fiona
 import geopandas as gpd
 import pandas as pd
+import requests
+from shapely.geometry import LineString, MultiLineString
 
 from heavywater_preview.config import (
     EUHYDRO_CRS,
     BASIN_LAYERS,
     LINE_LAYERS,
+    OVERPASS_API_URL,
     POLYGON_LAYERS,
     RIVER_BASINS_LAYER,
+    WGS84_CRS,
     WATER_LINES_LAYER,
     WATER_POLYGONS_LAYER,
 )
@@ -75,6 +79,47 @@ def collect_water_layers(data_dir: Path, bbox_geom):
     return _concat_frames(line_frames), _concat_frames(polygon_frames), _concat_frames(basin_frames)
 
 
+def fetch_water_layers_from_overpass(bbox_wgs84: tuple[float, float, float, float]):
+    south = bbox_wgs84[1]
+    west = bbox_wgs84[0]
+    north = bbox_wgs84[3]
+    east = bbox_wgs84[2]
+    query = f"""
+[out:json][timeout:60];
+(
+  way["waterway"~"river|stream|canal|ditch|drain"]({south},{west},{north},{east});
+  relation["waterway"~"river|stream|canal|ditch|drain"]({south},{west},{north},{east});
+);
+out geom;
+""".strip()
+    response = requests.post(
+        OVERPASS_API_URL,
+        data=query,
+        headers={"Content-Type": "text/plain", "User-Agent": "heavywater-preview/1.0"},
+        timeout=120,
+    )
+    response.raise_for_status()
+    payload = response.json()
+
+    line_records: list[dict] = []
+    for element in payload.get("elements", []):
+        geometry = _geometry_from_overpass_element(element)
+        if geometry is None:
+            continue
+        tags = element.get("tags", {})
+        line_records.append(
+            {
+                "source_file": "overpass",
+                "source_layer": tags.get("waterway", element.get("type", "waterway")),
+                "name": tags.get("name"),
+                "osm_id": str(element.get("id")),
+                "geometry": geometry,
+            }
+        )
+
+    return _build_wgs84_frame(line_records), _build_wgs84_frame([]), _build_wgs84_frame([])
+
+
 def _concat_frames(frames: list[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
     usable = [frame for frame in frames if not frame.empty]
     if not usable:
@@ -83,6 +128,32 @@ def _concat_frames(frames: list[gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
     merged = gpd.GeoDataFrame(pd.concat(usable, ignore_index=True), geometry="geometry", crs=usable[0].crs)
     merged = merged[merged.geometry.notna() & ~merged.geometry.is_empty].copy()
     return merged
+
+
+def _build_wgs84_frame(records: list[dict]) -> gpd.GeoDataFrame:
+    if not records:
+        return gpd.GeoDataFrame(columns=["source_file", "source_layer", "geometry"], geometry="geometry", crs=WGS84_CRS)
+
+    frame = gpd.GeoDataFrame(records, geometry="geometry", crs=WGS84_CRS)
+    return frame[frame.geometry.notna() & ~frame.geometry.is_empty].copy()
+
+
+def _geometry_from_overpass_element(element: dict):
+    if "geometry" in element:
+        coords = [(point["lon"], point["lat"]) for point in element["geometry"]]
+        if len(coords) >= 2:
+            return LineString(coords)
+
+    member_lines = []
+    for member in element.get("members", []):
+        coords = [(point["lon"], point["lat"]) for point in member.get("geometry", [])]
+        if len(coords) >= 2:
+            member_lines.append(LineString(coords))
+    if len(member_lines) == 1:
+        return member_lines[0]
+    if len(member_lines) > 1:
+        return MultiLineString(member_lines)
+    return None
 
 
 def write_water_layers(lines: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, basins: gpd.GeoDataFrame, output_path: Path) -> None:
