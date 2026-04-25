@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 import numpy as np
 import rasterio
 from rasterio.transform import Affine
 from rasterio.vrt import WarpedVRT
 
-from heavywater_preview.aoi import reproject_bounds_to_euhydro
+from heavywater_preview.copernicus import fetch_cdse_access_token, post_cdse_process_request, projected_dimensions
 from heavywater_preview.config import (
-    CDSE_CLIENT_ID_ENV_VARS,
-    CDSE_CLIENT_SECRET_ENV_VARS,
-    CDSE_SENTINELHUB_PROCESS_URL,
-    CDSE_TOKEN_URL,
     DEFAULT_TERRAIN_QUERY_STEP,
     TERRAIN_DEM_INSTANCE,
 )
@@ -39,10 +32,10 @@ def fetch_terrain_for_aoi(
     summary_output_path: Path,
     resolution_m: float,
 ) -> TerrainResult:
-    width, height = _terrain_dimensions(bbox_wgs84, resolution_m)
-    token = _fetch_access_token()
+    width, height = projected_dimensions(bbox_wgs84, resolution_m)
+    token = fetch_cdse_access_token()
     payload = _terrain_request_payload(bbox_wgs84, width, height)
-    dem_bytes = _post_process_request(payload, token)
+    dem_bytes = post_cdse_process_request(payload, token)
     dem_output_path.parent.mkdir(parents=True, exist_ok=True)
     dem_output_path.write_bytes(dem_bytes)
 
@@ -54,42 +47,6 @@ def fetch_terrain_for_aoi(
         summary=summary,
         query_data=_build_query_data(dem_output_path),
     )
-
-
-def _terrain_dimensions(bbox_wgs84: tuple[float, float, float, float], resolution_m: float) -> tuple[int, int]:
-    projected = reproject_bounds_to_euhydro(bbox_wgs84)
-    width_m = max(projected.bounds[2] - projected.bounds[0], resolution_m)
-    height_m = max(projected.bounds[3] - projected.bounds[1], resolution_m)
-    width = max(1, int(np.ceil(width_m / resolution_m)))
-    height = max(1, int(np.ceil(height_m / resolution_m)))
-    return width, height
-
-
-def _fetch_access_token() -> str:
-    client_id = _first_env_value(CDSE_CLIENT_ID_ENV_VARS)
-    client_secret = _first_env_value(CDSE_CLIENT_SECRET_ENV_VARS)
-    if not client_id or not client_secret:
-        raise RuntimeError(
-            "Terrain fetch requires Copernicus Data Space OAuth credentials. "
-            f"Set one of {CDSE_CLIENT_ID_ENV_VARS} and one of {CDSE_CLIENT_SECRET_ENV_VARS}."
-        )
-
-    body = urlencode(
-        {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
-    ).encode("utf-8")
-    request = Request(
-        CDSE_TOKEN_URL,
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    with urlopen(request, timeout=60) as response:
-        token_payload = json.loads(response.read().decode("utf-8"))
-    return token_payload["access_token"]
 
 
 def _terrain_request_payload(bbox_wgs84: tuple[float, float, float, float], width: int, height: int) -> dict:
@@ -111,11 +68,7 @@ def _terrain_request_payload(bbox_wgs84: tuple[float, float, float, float], widt
                 }
             ],
         },
-        "output": {
-            "width": width,
-            "height": height,
-            "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
-        },
+        "output": {"width": width, "height": height, "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}]},
         "evalscript": """
 //VERSION=3
 function setup() {
@@ -134,20 +87,6 @@ function evaluatePixel(sample) {
 }
 """.strip(),
     }
-
-
-def _post_process_request(payload: dict, token: str) -> bytes:
-    request = Request(
-        CDSE_SENTINELHUB_PROCESS_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-        method="POST",
-    )
-    with urlopen(request, timeout=180) as response:
-        return response.read()
 
 
 def _write_hillshade_and_summary(dem_path: Path, hillshade_path: Path, summary_path: Path) -> dict:
@@ -216,16 +155,6 @@ def _slope_aspect(dem: np.ndarray, transform: Affine) -> tuple[np.ndarray, np.nd
     slope_rad = np.arctan(np.hypot(grad_x, grad_y))
     aspect_rad = np.arctan2(-grad_x, grad_y)
     return slope_rad, aspect_rad
-
-
-def _first_env_value(names: tuple[str, ...]) -> str | None:
-    for name in names:
-        value = os.getenv(name)
-        if value:
-            return value
-    return None
-
-
 def _build_query_data(dem_path: Path, step: int = DEFAULT_TERRAIN_QUERY_STEP) -> dict:
     with rasterio.open(dem_path) as src:
         width = max(1, src.width // step)

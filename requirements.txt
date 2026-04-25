@@ -1,6 +1,8 @@
 folium
+cdsapi
 fiona
 geopandas
+netCDF4
 numpy
 pandas
 planetary-computer
