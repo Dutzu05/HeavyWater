@@ -6,11 +6,15 @@ from pathlib import Path
 
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
+    DEFAULT_COMMUNITY_PIXEL_AREA_M2,
     DEFAULT_COMMUNITY_THRESHOLD,
     DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
     DEFAULT_EFAS_DAYS_BACK,
+    DEFAULT_FARM_DEMAND_M3_DAY,
+    DEFAULT_GLOFAS_DAYS_BACK,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
+    DEFAULT_PEOPLE_PER_CLUSTER_PIXEL,
     DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
     DEFAULT_RIVER_METRIC_RESOLUTION_M,
     DEFAULT_STABILITY_BUFFER_M,
@@ -119,6 +123,41 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional line vector file for the proposed canal route. Falls back to the longest clipped water line.",
     )
+    parser.add_argument(
+        "--water-risk",
+        action="store_true",
+        help="Run the water-risk analysis and feasibility suggestions.",
+    )
+    parser.add_argument(
+        "--water-risk-mode",
+        choices=("community", "farm"),
+        default="community",
+        help="Community discovery scans cluster centroids; farm mode treats the input lat/lon as the demand center.",
+    )
+    parser.add_argument(
+        "--farm-demand-m3-day",
+        type=float,
+        default=DEFAULT_FARM_DEMAND_M3_DAY,
+        help="Estimated daily water demand for farm siting mode.",
+    )
+    parser.add_argument(
+        "--cluster-pixel-area-m2",
+        type=float,
+        default=DEFAULT_COMMUNITY_PIXEL_AREA_M2,
+        help="Pixel area used to convert community polygons into cluster pixel counts until GHSL/WorldPop is wired.",
+    )
+    parser.add_argument(
+        "--people-per-cluster-pixel",
+        type=float,
+        default=DEFAULT_PEOPLE_PER_CLUSTER_PIXEL,
+        help="Population proxy per cluster pixel for community discovery mode.",
+    )
+    parser.add_argument(
+        "--glofas-days-back",
+        type=int,
+        default=DEFAULT_GLOFAS_DAYS_BACK,
+        help="How many days back from today to request GloFAS historical discharge.",
+    )
     return parser
 
 
@@ -148,6 +187,12 @@ def main() -> None:
         differential_motion_threshold_mm_per_year=args.differential_motion_threshold,
         reservoir_site_wgs84=(args.reservoir_site_lat, args.reservoir_site_lon) if args.reservoir_site_lat is not None else None,
         canal_route_source=args.canal_route,
+        include_water_risk=args.water_risk,
+        water_risk_mode=args.water_risk_mode,
+        farm_demand_m3_day=args.farm_demand_m3_day,
+        cluster_pixel_area_m2=args.cluster_pixel_area_m2,
+        people_per_cluster_pixel=args.people_per_cluster_pixel,
+        glofas_days_back=args.glofas_days_back,
     )
     print(str(outputs.map_html_path))
 

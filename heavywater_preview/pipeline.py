@@ -7,11 +7,15 @@ from heavywater_preview.aoi import bbox_polygon_wgs84, build_bbox, reproject_bou
 from heavywater_preview.config import (
     COMMUNITY_GPKG_NAME,
     DEFAULT_BBOX_SIZE_KM,
+    DEFAULT_COMMUNITY_PIXEL_AREA_M2,
     DEFAULT_COMMUNITY_THRESHOLD,
+    DEFAULT_FARM_DEMAND_M3_DAY,
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
     DEFAULT_EFAS_DAYS_BACK,
+    DEFAULT_GLOFAS_DAYS_BACK,
+    DEFAULT_PEOPLE_PER_CLUSTER_PIXEL,
     DEFAULT_RIVER_METRIC_LOOKBACK_DAYS,
     DEFAULT_RIVER_METRIC_RESOLUTION_M,
     DEFAULT_STABILITY_BUFFER_M,
@@ -32,6 +36,7 @@ from heavywater_preview.impervious import communities_from_impervious_raster, wr
 from heavywater_preview.leaflet import write_preview_map
 from heavywater_preview.qgis_project import write_qgs_project
 from heavywater_preview.report import build_report_inputs, write_report_inputs
+from heavywater_preview.risk import WaterRiskResult, run_water_risk_analysis
 from heavywater_preview.river_metrics import enrich_rivers_with_metrics
 from heavywater_preview.stability import StabilityResult, evaluate_structural_stability
 from heavywater_preview.terrain import TerrainResult, fetch_terrain_for_aoi
@@ -48,6 +53,10 @@ class PipelineOutputs:
     terrain_summary_path: Path | None
     stability_points_path: Path | None
     stability_summary_path: Path | None
+    water_risk_points_path: Path | None
+    water_risk_canals_path: Path | None
+    water_risk_sites_path: Path | None
+    water_risk_summary_path: Path | None
     report_inputs_path: Path
     qgs_path: Path
     map_html_path: Path
@@ -75,6 +84,12 @@ def run_pipeline(
     differential_motion_threshold_mm_per_year: float = DEFAULT_DIFFERENTIAL_MOTION_THRESHOLD,
     reservoir_site_wgs84: tuple[float, float] | None = None,
     canal_route_source: str | Path | None = None,
+    include_water_risk: bool = False,
+    water_risk_mode: str = "community",
+    farm_demand_m3_day: float = DEFAULT_FARM_DEMAND_M3_DAY,
+    cluster_pixel_area_m2: float = DEFAULT_COMMUNITY_PIXEL_AREA_M2,
+    people_per_cluster_pixel: float = DEFAULT_PEOPLE_PER_CLUSTER_PIXEL,
+    glofas_days_back: int = DEFAULT_GLOFAS_DAYS_BACK,
 ) -> PipelineOutputs:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -136,6 +151,26 @@ def run_pipeline(
             fallback_river_lines=water_lines,
         )
 
+    water_risk_result: WaterRiskResult | None = None
+    if include_water_risk:
+        water_risk_result = run_water_risk_analysis(
+            mode=water_risk_mode,
+            bbox_wgs84=bbox_wgs84,
+            output_dir=output_dir,
+            water_lines=water_lines,
+            water_polygons=water_polygons,
+            communities=communities,
+            terrain_dem_raster=terrain_result.dem_raster_path if terrain_result else None,
+            demand_center_wgs84=(lat, lon) if water_risk_mode == "farm" else None,
+            farm_demand_m3_day=farm_demand_m3_day,
+            cluster_pixel_area_m2=cluster_pixel_area_m2,
+            people_per_cluster_pixel=people_per_cluster_pixel,
+            glofas_days_back=glofas_days_back,
+            egms_ortho_vertical=egms_ortho_vertical,
+            stability_buffer_m=stability_buffer_m,
+            differential_motion_threshold_mm_per_year=differential_motion_threshold_mm_per_year,
+        )
+
     report_inputs_path = output_dir / REPORT_INPUTS_NAME
     report_inputs = build_report_inputs(
         lat=lat,
@@ -143,6 +178,7 @@ def run_pipeline(
         size_km=size_km,
         terrain_summary=terrain_result.summary if terrain_result else None,
         stability_summary=stability_result.summary if stability_result else None,
+        water_risk_summary=water_risk_result.summary if water_risk_result else None,
     )
     write_report_inputs(report_inputs_path, report_inputs)
 
@@ -168,6 +204,9 @@ def run_pipeline(
         terrain_dem_raster=terrain_result.dem_raster_path if terrain_result else None,
         terrain_hillshade_raster=terrain_result.hillshade_raster_path if terrain_result else None,
         terrain_query_data=terrain_result.query_data if terrain_result else None,
+        water_risk_points=water_risk_result.risk_points if water_risk_result else None,
+        canal_paths=water_risk_result.canals if water_risk_result else None,
+        feasibility_sites=water_risk_result.sites if water_risk_result else None,
     )
 
     return PipelineOutputs(
@@ -179,6 +218,10 @@ def run_pipeline(
         terrain_summary_path=terrain_result.summary_path if terrain_result else None,
         stability_points_path=stability_result.points_path if stability_result else None,
         stability_summary_path=stability_result.summary_path if stability_result else None,
+        water_risk_points_path=water_risk_result.risk_points_path if water_risk_result else None,
+        water_risk_canals_path=water_risk_result.canals_path if water_risk_result else None,
+        water_risk_sites_path=water_risk_result.sites_path if water_risk_result else None,
+        water_risk_summary_path=water_risk_result.summary_path if water_risk_result else None,
         report_inputs_path=report_inputs_path,
         qgs_path=qgs_path,
         map_html_path=map_html_path,

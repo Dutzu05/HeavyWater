@@ -20,6 +20,9 @@ def write_preview_map(
     terrain_dem_raster: Path | None = None,
     terrain_hillshade_raster: Path | None = None,
     terrain_query_data: dict | None = None,
+    water_risk_points=None,
+    canal_paths=None,
+    feasibility_sites=None,
 ) -> None:
     fmap = folium.Map(location=[lat, lon], zoom_start=12, tiles="OpenStreetMap")
 
@@ -52,6 +55,62 @@ def write_preview_map(
             popup=folium.GeoJsonPopup(fields=river_popup_fields, aliases=river_popup_aliases, localize=True, labels=True),
         ).add_to(rivers_group)
     rivers_group.add_to(fmap)
+
+    if water_risk_points is not None and not water_risk_points.empty:
+        risk_group = folium.FeatureGroup(name="Water Stress", show=True)
+        for _, row in _format_risk_properties(water_risk_points).to_crs("EPSG:4326").iterrows():
+            style = _risk_style(row.get("water_risk"))
+            popup_html = (
+                "<strong>Water Stress</strong><br>"
+                f"Mode: {row.get('mode', 'n/a')}<br>"
+                f"Water risk: {row.get('water_risk', 'n/a')}<br>"
+                f"Distance to source: {row.get('distance_to_source_m', 'n/a')} m<br>"
+                f"Demand: {row.get('demand_m3_day', 'n/a')} m3/day<br>"
+                f"Flow rate: {row.get('supply_discharge_m3s', 'n/a')} m3/s<br>"
+                f"Supply: {row.get('supply_m3_day', 'n/a')} m3/day<br>"
+                f"Why: {row.get('risk_reason', 'n/a')}"
+            )
+            folium.CircleMarker(
+                location=[row.geometry.y, row.geometry.x],
+                radius=7,
+                popup=popup_html,
+                **style,
+            ).add_to(risk_group)
+        risk_group.add_to(fmap)
+
+    if canal_paths is not None and not canal_paths.empty:
+        canal_group = folium.FeatureGroup(name="Suggested Canal", show=True)
+        folium.GeoJson(
+            data=json.loads(_format_feasibility_properties(canal_paths).to_crs("EPSG:4326").to_json(default=str)),
+            style_function=lambda _: {"color": "#7a3db8", "weight": 4, "opacity": 0.9, "dashArray": "6,4"},
+            popup=folium.GeoJsonPopup(
+                fields=["distance_to_source_m", "gravity_feasibility_pct", "risk_status"],
+                aliases=["Distance to source (m)", "Gravity feasibility %", "Risk status"],
+                localize=True,
+                labels=True,
+            ),
+        ).add_to(canal_group)
+        canal_group.add_to(fmap)
+
+    if feasibility_sites is not None and not feasibility_sites.empty:
+        site_group = folium.FeatureGroup(name="Prime Construction Site", show=True)
+        for _, row in _format_feasibility_properties(feasibility_sites).to_crs("EPSG:4326").iterrows():
+            style = _site_style(row.get("stability_status"))
+            popup_html = (
+                "<strong>Prime Construction Site</strong><br>"
+                f"Site type: {row.get('site_type', 'n/a')}<br>"
+                f"Gravity feasibility: {row.get('gravity_feasibility_pct', 'n/a')} %<br>"
+                f"Stability safety rating: {row.get('stability_status', 'n/a')}<br>"
+                f"Basin feasibility: {row.get('basin_feasibility', 'n/a')}<br>"
+                f"Ksat: {row.get('ksat_mm_per_hour', 'n/a')} mm/h"
+            )
+            folium.CircleMarker(
+                location=[row.geometry.y, row.geometry.x],
+                radius=8,
+                popup=popup_html,
+                **style,
+            ).add_to(site_group)
+        site_group.add_to(fmap)
 
     fmap.fit_bounds([[bbox_wgs84[1], bbox_wgs84[0]], [bbox_wgs84[3], bbox_wgs84[2]]])
     folium.LayerControl(collapsed=False).add_to(fmap)
@@ -365,6 +424,45 @@ def _format_river_properties(water_lines):
         if column in enriched.columns:
             enriched[column] = enriched[column].map(formatter)
     return enriched
+
+
+def _format_risk_properties(risk_points):
+    enriched = risk_points.copy()
+    for column in ("distance_to_source_m", "demand_m3_day", "supply_discharge_m3s", "supply_m3_day"):
+        if column in enriched.columns:
+            formatter = _format_discharge if column == "supply_discharge_m3s" else _format_generic
+            enriched[column] = enriched[column].map(formatter)
+    return enriched
+
+
+def _format_feasibility_properties(features):
+    enriched = features.copy()
+    for column in ("distance_to_source_m", "gravity_feasibility_pct", "ksat_mm_per_hour"):
+        if column in enriched.columns:
+            enriched[column] = enriched[column].map(_format_generic)
+    return enriched
+
+
+def _risk_style(risk_status: str | None) -> dict:
+    color_map = {
+        "LOW RISK": "#2ca25f",
+        "MODERATE RISK": "#f0ad4e",
+        "HIGH RISK": "#d7301f",
+    }
+    color = color_map.get(risk_status or "", "#7f7f7f")
+    return {"color": color, "fillColor": color, "weight": 2, "fillOpacity": 0.85, "opacity": 0.95}
+
+
+def _site_style(stability_status: str | None) -> dict:
+    color_map = {
+        "STATUS: STABLE": "#1a9850",
+        "STATUS: MONITORING REQUIRED": "#fdae61",
+        "STATUS: HIGH RISK": "#d73027",
+    }
+    color = color_map.get(stability_status or "", "#2c7fb8")
+    return {"color": color, "fillColor": color, "weight": 2, "fillOpacity": 0.9, "opacity": 0.95}
+
+
 
 
 def _river_popup_fields(water_lines) -> tuple[list[str], list[str]]:

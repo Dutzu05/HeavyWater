@@ -13,6 +13,7 @@ def build_report_inputs(
     size_km: float,
     terrain_summary: dict | None,
     stability_summary: dict | None,
+    water_risk_summary: dict | None,
 ) -> dict:
     return {
         "location": {
@@ -23,6 +24,7 @@ def build_report_inputs(
         "terrain": terrain_summary,
         "soil": _safe_soil_summary(lat, lon),
         "stability": stability_summary,
+        "water_risk": water_risk_summary,
     }
 
 

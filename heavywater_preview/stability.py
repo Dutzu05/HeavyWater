@@ -39,7 +39,7 @@ def evaluate_structural_stability(
     canal_route_source: str | Path | None,
     fallback_river_lines: gpd.GeoDataFrame,
 ) -> StabilityResult:
-    source = _resolve_egms_source(egms_source)
+    source = _resolve_egms_source(egms_source, bbox_wgs84=bbox_wgs84, output_dir=output_points_path.parent)
     points = load_egms_ortho_vertical_points(source)
     aoi = _bbox_to_euhydro_polygon(bbox_wgs84)
     clipped = points.clip(aoi)
@@ -124,16 +124,20 @@ def classify_stability(v_mean_mm_per_year: float | None) -> tuple[str, int | Non
     return "STATUS: HIGH RISK", 0
 
 
-def _resolve_egms_source(egms_source: str | Path | None) -> str | Path:
+def _resolve_egms_source(
+    egms_source: str | Path | None,
+    *,
+    bbox_wgs84: tuple[float, float, float, float],
+    output_dir: Path,
+) -> str | Path:
     if egms_source:
         return egms_source
     env_source = first_env_value(EGMS_SOURCE_ENV_VARS)
     if env_source:
         return env_source
-    raise RuntimeError(
-        "Structural stability requires an EGMS Ortho Vertical CSV or GeoJSON source. "
-        "Pass --egms-ortho-vertical or set EGMS_ORTHO_VERTICAL_SOURCE in .env."
-    )
+    from heavywater_preview.egms import ensure_egms_components_for_bbox
+    fetch_result = ensure_egms_components_for_bbox(bbox_wgs84=bbox_wgs84, output_dir=output_dir / "egms")
+    return fetch_result.vertical_path
 
 
 def _load_egms_csv(handle) -> gpd.GeoDataFrame:
