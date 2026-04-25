@@ -180,6 +180,7 @@
               <button class="primary-btn" id="generate-btn" type="submit">Generate View</button>
               <button class="ghost-btn" id="reset-btn" type="button">Reset</button>
             </div>
+            <div id="status-text" class="status-bar wide"></div>
           </form>
         </div>
 
@@ -190,7 +191,10 @@
                 <p class="eyebrow">Interactive Map</p>
                 <h2>Click anywhere to set the target place</h2>
               </div>
-              <p id="live-coords" class="mono"></p>
+              <div class="mini-actions">
+                <p id="live-coords" class="mono"></p>
+                <button class="ghost-btn" id="copy-coords" type="button" title="Copy coordinates">Copy</button>
+              </div>
             </div>
             <div id="selection-map" aria-label="Coordinate selection map"></div>
           </div>
@@ -201,9 +205,18 @@
                 <p class="eyebrow">Generated View</p>
                 <h2>Preview Output</h2>
               </div>
-              <button class="ghost-btn" id="refresh-preview" type="button">Refresh Frame</button>
+              <div class="mini-actions">
+                <button class="ghost-btn" id="open-preview-tab" type="button">Open in New Tab</button>
+                <button class="ghost-btn" id="refresh-preview" type="button">Refresh Frame</button>
+              </div>
             </div>
-            <iframe id="preview-frame" title="HeavyWater generated preview"></iframe>
+            <div class="preview-container">
+              <div id="preview-loader" class="loader-overlay" style="display: none;">
+                <div class="spinner"></div>
+                <p>Generating Geospatial Preview...</p>
+              </div>
+              <iframe id="preview-frame" title="HeavyWater generated preview"></iframe>
+            </div>
             <div class="metric-grid">
               <article class="metric-card">
                 <span>Source</span>

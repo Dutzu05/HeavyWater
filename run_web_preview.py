@@ -478,15 +478,6 @@ def _write_fallback_preview(lat: float, lon: float, size_km: float, output_dir: 
           maxZoom: 19
         }});
 
-        const aoi = L.rectangle([[{south:.6f}, {west:.6f}], [{north:.6f}, {east:.6f}]], {{ 
-          color: 'rgba(15,124,107,0.95)', 
-          weight: 2, 
-          fillOpacity: 0.06 
-        }}).addTo(map);
-        
-        L.circleMarker([{lat:.6f}, {lon:.6f}], {{ radius: 7, color: 'rgba(223,108,59,0.95)', weight: 2, fillOpacity: 0.3 }}).addTo(map);
-        map.fitBounds(aoi.getBounds(), {{ padding: [18, 18] }});
-
         const waterData = {water_geojson_js};
         const communitiesData = {communities_geojson_js};
 
@@ -495,8 +486,8 @@ def _write_fallback_preview(lat: float, lon: float, size_km: float, output_dir: 
             const t = f?.geometry?.type || '';
             const isPoly = t === 'Polygon' || t === 'MultiPolygon';
             return isPoly
-              ? {{ color: 'rgba(15,124,107,0.92)', weight: 2, opacity: 0.85, fillOpacity: 0.10, fillColor: 'rgba(86,212,195,0.26)' }}
-              : {{ color: 'rgba(15,124,107,0.92)', weight: 2, opacity: 0.9 }};
+              ? {{ color: '#0057ff', weight: 2, opacity: 0.85, fillOpacity: 0.10, fillColor: '#0057ff' }}
+              : {{ color: '#0057ff', weight: 3, opacity: 0.9 }};
           }},
           onEachFeature: (feature, layer) => {{
             if (feature.properties && feature.properties.name) {{
