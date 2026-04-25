@@ -81,7 +81,8 @@ def communities_from_impervious_raster(
 
     communities["geometry"] = communities.geometry.buffer(0)
     communities = merge_nearby_communities(communities, merge_distance_m=merge_distance_m)
-    return communities[["class_name", "threshold", "area_m2", "geometry"]]
+    columns = [column for column in ("class_name", "threshold", "area_m2", "block_area_m2", "member_count", "geometry") if column in communities.columns]
+    return communities[columns]
 
 
 def write_community_layers(communities: gpd.GeoDataFrame, output_path: Path) -> None:
@@ -92,29 +93,53 @@ def write_community_layers(communities: gpd.GeoDataFrame, output_path: Path) -> 
 
 
 def _empty_communities() -> gpd.GeoDataFrame:
-    return gpd.GeoDataFrame(columns=["class_name", "threshold", "area_m2", "geometry"], geometry="geometry", crs=EUHYDRO_CRS)
+    return gpd.GeoDataFrame(
+        columns=["class_name", "threshold", "area_m2", "block_area_m2", "member_count", "geometry"],
+        geometry="geometry",
+        crs=EUHYDRO_CRS,
+    )
 
 
 def merge_nearby_communities(communities: gpd.GeoDataFrame, merge_distance_m: float) -> gpd.GeoDataFrame:
     if communities.empty or merge_distance_m <= 0:
         return communities.copy()
 
-    working = communities[["class_name", "threshold", "geometry"]].copy()
-    working["geometry"] = working.geometry.buffer(merge_distance_m / 2.0)
-    dissolved_geometry = working.geometry.union_all()
+    originals = communities.copy()
+    buffered = originals.geometry.buffer(merge_distance_m / 2.0)
+    dissolved_geometry = buffered.union_all()
     if dissolved_geometry.is_empty:
         return _empty_communities()
 
-    merged = gpd.GeoDataFrame(geometry=gpd.GeoSeries([dissolved_geometry], crs=EUHYDRO_CRS).explode(index_parts=False), crs=EUHYDRO_CRS)
-    merged["geometry"] = merged.geometry.buffer(-(merge_distance_m / 2.0)).buffer(0)
-    merged = merged[merged.geometry.notna() & ~merged.geometry.is_empty].copy()
-    if merged.empty:
+    blocks = gpd.GeoDataFrame(
+        geometry=gpd.GeoSeries([dissolved_geometry], crs=EUHYDRO_CRS).explode(index_parts=False),
+        crs=EUHYDRO_CRS,
+    )
+    blocks["geometry"] = blocks.geometry.simplify(max(merge_distance_m / 8.0, 1.0), preserve_topology=True).buffer(0)
+    blocks = blocks[blocks.geometry.notna() & ~blocks.geometry.is_empty].copy()
+    if blocks.empty:
         return _empty_communities()
 
-    merged["class_name"] = "community"
-    merged["threshold"] = float(communities["threshold"].iloc[0]) if "threshold" in communities.columns and not communities.empty else np.nan
-    merged["area_m2"] = merged.geometry.area.astype(float)
-    return merged[["class_name", "threshold", "area_m2", "geometry"]].reset_index(drop=True)
+    features = []
+    threshold = float(originals["threshold"].iloc[0]) if "threshold" in originals.columns and not originals.empty else np.nan
+    for block in blocks.geometry:
+        members = originals[originals.geometry.intersects(block)]
+        if members.empty:
+            continue
+        features.append(
+            {
+                "class_name": "community",
+                "threshold": threshold,
+                "area_m2": float(members["area_m2"].sum()),
+                "block_area_m2": float(block.area),
+                "member_count": int(len(members)),
+                "geometry": block,
+            }
+        )
+
+    if not features:
+        return _empty_communities()
+
+    return gpd.GeoDataFrame(features, geometry="geometry", crs=EUHYDRO_CRS).reset_index(drop=True)
 
 
 def _ensure_overlapping_communities_rasters(aoi_wgs84) -> list[Path]:

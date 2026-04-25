@@ -49,10 +49,21 @@ def write_preview_map(
 
     community_group = folium.FeatureGroup(name="Communities", show=True)
     if not communities.empty:
+        community_tooltip_fields = [field for field in ("area_m2", "block_area_m2", "member_count") if field in communities.columns]
+        community_tooltip_aliases = {
+            "area_m2": "Built-up area (m2)",
+            "block_area_m2": "Block area (m2)",
+            "member_count": "Merged tiles",
+        }
         folium.GeoJson(
             data=json.loads(communities.to_crs("EPSG:4326").to_json(default=str)),
             style_function=lambda _: {"color": "#8f1d14", "fillColor": "#d7301f", "weight": 1, "fillOpacity": 0.65, "opacity": 0.95},
-            tooltip=folium.GeoJsonTooltip(fields=["area_m2"], aliases=["Area (m2)"], localize=True, sticky=True),
+            tooltip=folium.GeoJsonTooltip(
+                fields=community_tooltip_fields,
+                aliases=[community_tooltip_aliases[field] for field in community_tooltip_fields],
+                localize=True,
+                sticky=True,
+            ),
         ).add_to(community_group)
     community_group.add_to(fmap)
 
