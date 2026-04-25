@@ -10,7 +10,10 @@ from heavywater_preview.config import (
     DEFAULT_MIN_COMMUNITY_AREA_M2,
     DEFAULT_OUTPUT_DIR,
     DEFAULT_TERRAIN_RESOLUTION_M,
+    DEFAULT_WATER_SOURCE,
     PROJECT_ROOT,
+    WATER_SOURCE_EUHYDRO,
+    WATER_SOURCE_OVERPASS,
 )
 from heavywater_preview.pipeline import run_pipeline
 
@@ -20,6 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("lat", type=float, help="Latitude in WGS84.")
     parser.add_argument("lon", type=float, help="Longitude in WGS84.")
     parser.add_argument("--size-km", type=float, default=DEFAULT_BBOX_SIZE_KM, help="AOI size in kilometers.")
+    parser.add_argument(
+        "--water-source",
+        choices=(WATER_SOURCE_EUHYDRO, WATER_SOURCE_OVERPASS),
+        default=DEFAULT_WATER_SOURCE,
+        help="Water data source. Defaults to 'overpass' to fetch rivers from the OpenStreetMap Overpass API.",
+    )
     parser.add_argument(
         "--communities-raster",
         type=Path,
@@ -60,6 +69,7 @@ def main() -> None:
         lon=args.lon,
         size_km=args.size_km,
         output_dir=args.output_dir,
+        water_source=args.water_source,
         communities_raster=args.communities_raster,
         community_threshold=args.community_threshold,
         min_community_area_m2=args.min_community_area_m2,

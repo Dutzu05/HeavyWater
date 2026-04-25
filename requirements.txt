@@ -8,5 +8,6 @@ pyproj
 pystac
 pystac-client
 rasterio
+requests
 scipy
 shapely
