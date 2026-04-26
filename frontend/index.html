@@ -296,6 +296,41 @@
                 <strong id="insight-min-area">2000 m2</strong>
                 <p>Sets the minimum footprint for a community polygon. Any generated shape smaller than this area will be ignored, preventing tiny, irrelevant clusters.</p>
               </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 1 - Target Location</span>
+                <strong>Latitude, Longitude, AOI size</strong>
+                <p>Pick the project point by clicking on the map or typing coordinates. AOI size defines how wide the analysis area is around that point.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 2 - Community Inputs</span>
+                <strong>Raster, Threshold, Min Area, Merge</strong>
+                <p>These settings shape how settlement polygons are extracted and cleaned: threshold filters noise, minimum area removes tiny fragments, and merge distance joins nearby pieces.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 3 - Terrain Overlay</span>
+                <strong>Terrain toggle and resolution</strong>
+                <p>Enable this to include elevation-driven context. Resolution sets the detail level of terrain sampling, balancing precision and runtime.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 4 - Hydrology and Metrics</span>
+                <strong>River metrics, discharge, lookback</strong>
+                <p>River metrics adds water indicators, while discharge simulation adds modeled flow behavior. Resolution and lookback define spatial detail and historical window.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 5 - Ground Stability</span>
+                <strong>EGMS motion screening</strong>
+                <p>Stability analysis checks ground movement trends. Buffer controls the search radius around your AOI and motion threshold sets the sensitivity for flagged movement.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 6 - Water Risk Logic</span>
+                <strong>Community or farm-point risk mode</strong>
+                <p>Choose whether risk is scored for all communities or a specific farm point. Farm demand and GloFAS history tune the demand pressure and flow-history context.</p>
+              </article>
+              <article class="insight-card">
+                <span class="insight-label">Step 7 - Run and Review</span>
+                <strong>Generate View, Reset, Preview tab</strong>
+                <p>Generate View runs the selected pipeline. Reset restores defaults. Results appear in the Preview tab and linked reports update when available.</p>
+              </article>
             </div>
           </div>
         </section>
