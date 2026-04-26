@@ -8,12 +8,16 @@ from functools import partial
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlparse
+from urllib.parse import parse_qs
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
 
 from heavywater_preview.config import (
     DEFAULT_BBOX_SIZE_KM,
+    COMMUNITY_GPKG_NAME,
+    COMMUNITIES_LAYER,
     DEFAULT_COMMUNITY_MERGE_DISTANCE_M,
     DEFAULT_COMMUNITY_PIXEL_AREA_M2,
     DEFAULT_COMMUNITY_THRESHOLD,
@@ -30,7 +34,16 @@ from heavywater_preview.config import (
     DEFAULT_TERRAIN_RESOLUTION_M,
     DEFAULT_WATER_SOURCE,
     INDEX_HTML_NAME,
+    MAP_HTML_NAME,
     PROJECT_ROOT as PACKAGE_PROJECT_ROOT,
+    REPORT_INPUTS_NAME,
+    TERRAIN_DEM_NAME,
+    TERRAIN_HILLSHADE_NAME,
+    WATER_GPKG_NAME,
+    WATER_LINES_LAYER,
+    WATER_RISK_CANALS_NAME,
+    WATER_RISK_POINTS_NAME,
+    WATER_RISK_SITES_NAME,
     WATER_SOURCE_EUHYDRO,
     WATER_SOURCE_OVERPASS,
 )
@@ -42,16 +55,120 @@ except ImportError:
     run_pipeline = None
     HAS_GIS_PIPELINE = False
 
+try:
+    from heavywater_preview.terrain import sample_terrain_point
+except ImportError:
+    sample_terrain_point = None
+
+try:
+    import geopandas as gpd
+except ImportError:
+    gpd = None
+
+try:
+    from tools.build_water_reports_docx import build_case_study, build_guideline
+except ImportError:
+    build_case_study = None
+    build_guideline = None
+
+try:
+    from heavywater_preview.leaflet import write_preview_map
+except ImportError:
+    write_preview_map = None
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 OUTPUT_DIR = DEFAULT_OUTPUT_DIR
 INDEX_PATH = OUTPUT_DIR / INDEX_HTML_NAME
+GUIDELINE_REPORT_PATH = OUTPUT_DIR / "romania_water_legal_guideline.docx"
+CASE_STUDY_REPORT_PATH = OUTPUT_DIR / "technical_feasibility_case_study_template.docx"
 PORT = 8000
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 )
+
+
+def _can_rebuild_preview_from_existing_outputs() -> bool:
+    required = [
+        OUTPUT_DIR / WATER_GPKG_NAME,
+        OUTPUT_DIR / COMMUNITY_GPKG_NAME,
+    ]
+    return gpd is not None and write_preview_map is not None and all(path.exists() for path in required)
+
+
+def _rewrite_preview_from_existing_outputs(lat: float, lon: float, size_km: float):
+    if not _can_rebuild_preview_from_existing_outputs():
+        raise RuntimeError("Existing geospatial outputs are not complete enough to rebuild the preview.")
+
+    water_lines = gpd.read_file(OUTPUT_DIR / WATER_GPKG_NAME, layer=WATER_LINES_LAYER)
+    communities = gpd.read_file(OUTPUT_DIR / COMMUNITY_GPKG_NAME, layer=COMMUNITIES_LAYER)
+    water_risk_mode = None
+    report_inputs_path = OUTPUT_DIR / REPORT_INPUTS_NAME
+    if report_inputs_path.exists():
+        try:
+            payload = json.loads(report_inputs_path.read_text(encoding="utf-8"))
+            water_risk_mode = ((payload.get("water_risk") or {}).get("mode"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            water_risk_mode = None
+
+    water_risk_points = None
+    if (OUTPUT_DIR / WATER_RISK_POINTS_NAME).exists():
+        water_risk_points = gpd.read_file(OUTPUT_DIR / WATER_RISK_POINTS_NAME)
+        if water_risk_mode == "community" and not water_risk_points.empty:
+            communities = water_risk_points
+            water_risk_points = None
+
+    canal_paths = None
+    if (OUTPUT_DIR / WATER_RISK_CANALS_NAME).exists():
+        canal_paths = gpd.read_file(OUTPUT_DIR / WATER_RISK_CANALS_NAME)
+
+    feasibility_sites = None
+    if (OUTPUT_DIR / WATER_RISK_SITES_NAME).exists():
+        feasibility_sites = gpd.read_file(OUTPUT_DIR / WATER_RISK_SITES_NAME)
+
+    bbox_wgs84 = _approx_bbox(lat, lon, size_km)
+    map_html_path = OUTPUT_DIR / MAP_HTML_NAME
+    index_html_path = OUTPUT_DIR / INDEX_HTML_NAME
+    terrain_dem_raster = OUTPUT_DIR / TERRAIN_DEM_NAME if (OUTPUT_DIR / TERRAIN_DEM_NAME).exists() else None
+    terrain_hillshade_raster = OUTPUT_DIR / TERRAIN_HILLSHADE_NAME if (OUTPUT_DIR / TERRAIN_HILLSHADE_NAME).exists() else None
+
+    write_preview_map(
+        html_path=map_html_path,
+        index_path=index_html_path,
+        lat=lat,
+        lon=lon,
+        bbox_wgs84=bbox_wgs84,
+        water_lines=water_lines,
+        communities=communities,
+        terrain_dem_raster=terrain_dem_raster,
+        terrain_hillshade_raster=terrain_hillshade_raster,
+        terrain_query_data=None,
+        water_risk_points=water_risk_points,
+        canal_paths=canal_paths,
+        feasibility_sites=feasibility_sites,
+    )
+    return SimpleNamespace(map_html_path=map_html_path, index_html_path=index_html_path, output_dir=OUTPUT_DIR)
+
+
+def _cached_outputs_match_request(lat: float, lon: float, size_km: float, tolerance: float = 1e-4) -> bool:
+    report_inputs_path = OUTPUT_DIR / REPORT_INPUTS_NAME
+    if not report_inputs_path.exists():
+        return False
+    try:
+        payload = json.loads(report_inputs_path.read_text(encoding="utf-8"))
+        location = payload.get("location") or {}
+        cached_lat = float(location.get("lat"))
+        cached_lon = float(location.get("lon"))
+        cached_size = float(location.get("size_km"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return (
+        abs(cached_lat - float(lat)) <= tolerance
+        and abs(cached_lon - float(lon)) <= tolerance
+        and abs(cached_size - float(size_km)) <= tolerance
+    )
 
 
 def _load_dotenv() -> None:
@@ -544,6 +661,9 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/status":
             self._handle_status()
             return
+        if parsed.path == "/api/terrain-query":
+            self._handle_terrain_query(parsed.query)
+            return
         if parsed.path == "/":
             self.path = "/frontend/index.html"
         elif parsed.path == "/app.js":
@@ -621,34 +741,53 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
             ))
 
             if HAS_GIS_PIPELINE and run_pipeline:
-                outputs = run_pipeline(
-                    lat=lat,
-                    lon=lon,
-                    size_km=size_km,
-                    output_dir=OUTPUT_DIR,
-                    water_source=water_source,
-                    communities_raster=communities_raster,
-                    community_threshold=community_threshold,
-                    min_community_area_m2=min_community_area_m2,
-                    community_merge_distance_m=community_merge_distance_m,
-                    include_terrain=include_terrain,
-                    terrain_resolution_m=terrain_resolution_m,
-                    include_river_metrics=include_river_metrics,
-                    include_river_discharge=include_river_discharge,
-                    river_metric_resolution_m=river_metric_resolution_m,
-                    river_metric_lookback_days=river_metric_lookback_days,
-                    efas_days_back=efas_days_back,
-                    include_stability=include_stability,
-                    egms_ortho_vertical=egms_ortho_vertical,
-                    stability_buffer_m=stability_buffer_m,
-                    differential_motion_threshold_mm_per_year=differential_motion_threshold,
-                    include_water_risk=include_water_risk,
-                    water_risk_mode=water_risk_mode,
-                    farm_demand_m3_day=farm_demand_m3_day,
-                    cluster_pixel_area_m2=cluster_pixel_area_m2,
-                    people_per_cluster_pixel=people_per_cluster_pixel,
-                    glofas_days_back=glofas_days_back,
-                )
+                try:
+                    outputs = run_pipeline(
+                        lat=lat,
+                        lon=lon,
+                        size_km=size_km,
+                        output_dir=OUTPUT_DIR,
+                        water_source=water_source,
+                        communities_raster=communities_raster,
+                        community_threshold=community_threshold,
+                        min_community_area_m2=min_community_area_m2,
+                        community_merge_distance_m=community_merge_distance_m,
+                        include_terrain=include_terrain,
+                        terrain_resolution_m=terrain_resolution_m,
+                        include_river_metrics=include_river_metrics,
+                        include_river_discharge=include_river_discharge,
+                        river_metric_resolution_m=river_metric_resolution_m,
+                        river_metric_lookback_days=river_metric_lookback_days,
+                        efas_days_back=efas_days_back,
+                        include_stability=include_stability,
+                        egms_ortho_vertical=egms_ortho_vertical,
+                        stability_buffer_m=stability_buffer_m,
+                        differential_motion_threshold_mm_per_year=differential_motion_threshold,
+                        include_water_risk=include_water_risk,
+                        water_risk_mode=water_risk_mode,
+                        farm_demand_m3_day=farm_demand_m3_day,
+                        cluster_pixel_area_m2=cluster_pixel_area_m2,
+                        people_per_cluster_pixel=people_per_cluster_pixel,
+                        glofas_days_back=glofas_days_back,
+                    )
+                except Exception as pipeline_exc:
+                    pipeline_error_text = str(pipeline_exc)
+                    recoverable_pipeline_failure = any(
+                        marker in pipeline_error_text
+                        for marker in (
+                            "Copernicus Data Space access requires OAuth credentials",
+                            "forbidden by its access permissions",
+                            "WinError 10013",
+                        )
+                    )
+                    if (
+                        recoverable_pipeline_failure
+                        and _can_rebuild_preview_from_existing_outputs()
+                        and _cached_outputs_match_request(lat=lat, lon=lon, size_km=size_km)
+                    ):
+                        outputs = _rewrite_preview_from_existing_outputs(lat=lat, lon=lon, size_km=size_km)
+                    else:
+                        raise
             else:
                 # Fallback generator (Overpass-only)
                 map_html_path, index_html_path = _write_fallback_preview(
@@ -666,6 +805,10 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                         "output_dir": OUTPUT_DIR,
                     },
                 )()
+            if build_guideline and not GUIDELINE_REPORT_PATH.exists():
+                build_guideline()
+            if build_case_study and HAS_GIS_PIPELINE:
+                build_case_study()
         except Exception as exc:
             self._write_json(
                 HTTPStatus.BAD_REQUEST,
@@ -706,6 +849,16 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
         super().log_message(format, *args)
 
     def _handle_status(self) -> None:
+        if build_guideline and not GUIDELINE_REPORT_PATH.exists():
+            try:
+                build_guideline()
+            except Exception:
+                pass
+        if build_case_study and not CASE_STUDY_REPORT_PATH.exists() and (OUTPUT_DIR / REPORT_INPUTS_NAME).exists():
+            try:
+                build_case_study()
+            except Exception:
+                pass
         self._write_json(
             HTTPStatus.OK,
             {
@@ -713,6 +866,18 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                 "has_preview": INDEX_PATH.exists(),
                 "preview_url": "/output/index.html" if INDEX_PATH.exists() else None,
                 "has_gis_pipeline": HAS_GIS_PIPELINE,
+                "documents": {
+                    "guideline": {
+                        "available": GUIDELINE_REPORT_PATH.exists(),
+                        "url": self._public_path(GUIDELINE_REPORT_PATH) if GUIDELINE_REPORT_PATH.exists() else None,
+                        "label": "Romania legal guideline",
+                    },
+                    "case_study": {
+                        "available": CASE_STUDY_REPORT_PATH.exists(),
+                        "url": self._public_path(CASE_STUDY_REPORT_PATH) if CASE_STUDY_REPORT_PATH.exists() else None,
+                        "label": "Technical feasibility case study",
+                    },
+                },
                 "defaults": {
                     "size_km": DEFAULT_BBOX_SIZE_KM,
                     "water_source": DEFAULT_WATER_SOURCE,
@@ -737,6 +902,27 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                 },
             },
         )
+
+    def _handle_terrain_query(self, query: str) -> None:
+        if sample_terrain_point is None or not (OUTPUT_DIR / TERRAIN_DEM_NAME).exists():
+            self._write_json(
+                HTTPStatus.NOT_FOUND,
+                {"ok": False, "error": "Terrain sampling is unavailable for the current preview."},
+            )
+            return
+        params = parse_qs(query)
+        try:
+            lat = float(params.get("lat", [None])[0])
+            lon = float(params.get("lon", [None])[0])
+        except (TypeError, ValueError):
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "lat and lon are required numeric query parameters."})
+            return
+        try:
+            payload = sample_terrain_point(OUTPUT_DIR / TERRAIN_DEM_NAME, lat=lat, lon=lon)
+        except Exception as exc:
+            self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        self._write_json(HTTPStatus.OK, {"ok": True, **payload})
 
     def _read_json_body(self) -> dict:
         content_length = int(self.headers.get("Content-Length", "0"))

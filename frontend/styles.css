@@ -124,6 +124,14 @@ button {
   z-index: 1000;
 }
 
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -585,6 +593,7 @@ button {
 .ghost-btn,
 .quick-button,
 .chip-btn,
+.report-btn,
 .tab-btn {
   border: 0;
   cursor: pointer;
@@ -608,10 +617,42 @@ button {
 .ghost-btn,
 .quick-button,
 .chip-btn,
+.report-btn,
 .tab-btn {
   color: var(--text);
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(49, 78, 64, 0.14);
+}
+
+.report-actions {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(15, 124, 107, 0.06);
+  border: 1px solid rgba(49, 78, 64, 0.12);
+}
+
+.report-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.report-btn:not(.is-disabled) {
+  color: #173d3f;
+  background: rgba(232, 247, 244, 0.96);
+}
+
+.report-btn.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .chip-btn.is-accent {
@@ -631,6 +672,7 @@ button {
 .ghost-btn:hover,
 .quick-button:hover,
 .chip-btn:hover,
+.report-btn:not(.is-disabled):hover,
 .tab-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 12px 26px rgba(9, 27, 20, 0.11);
@@ -640,6 +682,7 @@ button {
 .ghost-btn:active,
 .quick-button:active,
 .chip-btn:active,
+.report-btn:not(.is-disabled):active,
 .tab-btn:active {
   transform: translateY(0px);
 }
@@ -839,6 +882,21 @@ button {
     border-radius: 26px;
     align-items: start;
     flex-direction: column;
+  }
+
+  .topbar-controls {
+    width: 100%;
+    align-items: stretch;
+    justify-content: space-between;
+  }
+
+  .report-actions {
+    flex: 1;
+  }
+
+  .report-btn {
+    flex: 1;
+    justify-content: center;
   }
 
   .hero-media,

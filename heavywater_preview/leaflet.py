@@ -229,9 +229,9 @@ def write_preview_map(
     folium.LayerControl(collapsed=False).add_to(fmap)
     MeasureControl(position="topleft", primary_length_unit="kilometers", secondary_length_unit="meters").add_to(fmap)
     MousePosition(position="bottomright", separator=" | ", prefix="Coords: ").add_to(fmap)
-    if terrain_query_data is not None:
+    if terrain_dem_raster is not None:
         fmap.get_root().script.add_child(
-            folium.Element(_terrain_click_script(fmap.get_name(), terrain_query_data))
+            folium.Element(_terrain_click_script(fmap.get_name()))
         )
     fmap.save(html_path)
     index_path.write_text(html_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -299,23 +299,12 @@ def _hypsometric_tint(normalized: np.ndarray) -> np.ndarray:
     return np.stack([red, green, blue], axis=-1)
 
 
-def _terrain_click_script(map_name: str, terrain_query_data: dict) -> str:
-    payload = json.dumps(terrain_query_data, separators=(",", ":"))
+def _terrain_click_script(map_name: str) -> str:
     return f"""
 (function() {{
   const mapName = "{map_name}";
-  const terrain = {payload};
   const soilApiBase = "https://rest.isric.org/soilgrids/v2.0/properties/query";
-  const bounds = terrain.bounds;
-  const west = bounds[0], south = bounds[1], east = bounds[2], north = bounds[3];
-  const width = terrain.width, height = terrain.height;
-  const elevation = terrain.elevation;
-  const slope = terrain.slope;
-
-  function sampleGrid(grid, row, col) {{
-    const value = grid[row][col];
-    return value === null ? null : value;
-  }}
+  const terrainApiBase = "/api/terrain-query";
 
   function formatTerrainPopup(lat, lon, elevText, slopeText, geotechHtml) {{
     return (
@@ -326,6 +315,13 @@ def _terrain_click_script(map_name: str, terrain_query_data: dict) -> str:
       "Slope: " + slopeText + "<br><br>" +
       geotechHtml
     );
+  }}
+
+  function terrainQueryUrl(lat, lon) {{
+    const params = new URLSearchParams();
+    params.set("lat", lat.toFixed(6));
+    params.set("lon", lon.toFixed(6));
+    return terrainApiBase + "?" + params.toString();
   }}
 
   function soilQueryUrl(lat, lon) {{
@@ -474,6 +470,15 @@ def _terrain_click_script(map_name: str, terrain_query_data: dict) -> str:
     }};
   }}
 
+  async function fetchTerrainData(lat, lon) {{
+    const response = await fetch(terrainQueryUrl(lat, lon));
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {{
+      throw new Error(payload.error || "Terrain query failed.");
+    }}
+    return payload;
+  }}
+
   function attachTerrainClick() {{
     const map = window[mapName];
     if (!map) {{
@@ -484,39 +489,27 @@ def _terrain_click_script(map_name: str, terrain_query_data: dict) -> str:
     map.on("click", function(e) {{
       const lat = e.latlng.lat;
       const lon = e.latlng.lng;
-      if (lon < west || lon > east || lat < south || lat > north) {{
-        L.popup()
-          .setLatLng(e.latlng)
-          .setContent("Terrain data unavailable outside the fetched AOI.")
-          .openOn(map);
-        return;
-      }}
-
-      const col = Math.max(0, Math.min(width - 1, Math.floor(((lon - west) / (east - west)) * width)));
-      const row = Math.max(0, Math.min(height - 1, Math.floor(((north - lat) / (north - south)) * height)));
-      const elev = sampleGrid(elevation, row, col);
-      const slp = sampleGrid(slope, row, col);
-      const elevText = elev === null || Number.isNaN(elev) ? "n/a" : elev.toFixed(1) + " m";
-      const slopeText = slp === null || Number.isNaN(slp) ? "n/a" : slp.toFixed(1) + " deg";
       const popup = L.popup()
         .setLatLng(e.latlng)
-        .setContent(formatTerrainPopup(lat, lon, elevText, slopeText, "<strong>Geotechnical Feasibility</strong><br>Loading SoilGrids..."))
+        .setContent(formatTerrainPopup(lat, lon, "loading...", "loading...", "<strong>Geotechnical Feasibility</strong><br>Loading SoilGrids..."))
         .openOn(map);
 
-      fetchSoilData(lat, lon)
-        .then(function(soil) {{
-          popup.setContent(formatTerrainPopup(lat, lon, elevText, slopeText, formatGeotechHtml(soil)));
-        }})
-        .catch(function(error) {{
-          popup.setContent(
-            formatTerrainPopup(
-              lat,
-              lon,
-              elevText,
-              slopeText,
-              formatGeotechHtml({{ error: "Soil data unavailable: " + error.message }})
-            )
-          );
+      Promise.allSettled([fetchTerrainData(lat, lon), fetchSoilData(lat, lon)])
+        .then(function(results) {{
+          const terrainResult = results[0];
+          const soilResult = results[1];
+          const terrainOk = terrainResult.status === "fulfilled";
+          const soilOk = soilResult.status === "fulfilled";
+          const terrain = terrainOk ? terrainResult.value : null;
+          const elevText = terrain && typeof terrain.elevation_m === "number" ? terrain.elevation_m.toFixed(1) + " m" : "n/a";
+          const slopeText = terrain && typeof terrain.slope_deg === "number" ? terrain.slope_deg.toFixed(1) + " deg" : "n/a";
+          let geotechHtml = soilOk
+            ? formatGeotechHtml(soilResult.value)
+            : formatGeotechHtml({{ error: "Soil data unavailable: " + soilResult.reason.message }});
+          if (!terrainOk) {{
+            geotechHtml += "<br><br><strong>Terrain note</strong><br>" + terrainResult.reason.message;
+          }}
+          popup.setContent(formatTerrainPopup(lat, lon, elevText, slopeText, geotechHtml));
         }});
     }});
   }}

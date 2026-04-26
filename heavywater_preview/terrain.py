@@ -8,6 +8,7 @@ import numpy as np
 import rasterio
 from rasterio.transform import Affine
 from rasterio.vrt import WarpedVRT
+from rasterio.windows import Window
 
 from heavywater_preview.copernicus import fetch_cdse_access_token, post_cdse_process_request, projected_dimensions
 from heavywater_preview.config import (
@@ -192,3 +193,30 @@ def _compute_slope_degrees_geographic(dem: np.ndarray, transform: Affine, mean_l
     slope = np.rad2deg(np.arctan(np.hypot(grad_x, grad_y)))
     slope[~np.isfinite(dem)] = np.nan
     return slope
+
+
+def sample_terrain_point(dem_path: Path, lat: float, lon: float) -> dict:
+    with rasterio.open(dem_path) as src:
+        with WarpedVRT(src, crs="EPSG:4326") as vrt:
+            west, south, east, north = vrt.bounds
+            if lon < west or lon > east or lat < south or lat > north:
+                raise ValueError("Terrain data unavailable outside the fetched AOI.")
+
+            row, col = vrt.index(lon, lat)
+            if row < 0 or col < 0 or row >= vrt.height or col >= vrt.width:
+                raise ValueError("Terrain sample is outside the raster grid.")
+
+            window = Window(max(0, col - 1), max(0, row - 1), min(3, vrt.width - max(0, col - 1)), min(3, vrt.height - max(0, row - 1)))
+            dem = vrt.read(1, window=window, masked=True).astype("float32").filled(np.nan)
+            transform = vrt.window_transform(window)
+            slope = _compute_slope_degrees_geographic(dem, transform, mean_lat=lat)
+
+            center_row = min(1, dem.shape[0] - 1)
+            center_col = min(1, dem.shape[1] - 1)
+            elevation = float(dem[center_row, center_col]) if np.isfinite(dem[center_row, center_col]) else None
+            slope_deg = float(slope[center_row, center_col]) if np.isfinite(slope[center_row, center_col]) else None
+
+    return {
+        "elevation_m": elevation,
+        "slope_deg": slope_deg,
+    }

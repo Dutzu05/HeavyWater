@@ -4,6 +4,7 @@
 
 const state = {
   previewUrl: null,
+  previewLoadedUrl: null,
 };
 
 const form = document.querySelector("#generator-form");
@@ -32,7 +33,6 @@ const glofasDaysInput = document.querySelector("#glofas-days-input");
 const previewFrame = document.querySelector("#preview-frame");
 const previewLoader = document.querySelector("#preview-loader");
 const statusText = document.querySelector("#status-text");
-const liveCoords = document.querySelector("#live-coords");
 const generateBtn = document.querySelector("#generate-btn");
 const metricWaterSource = document.querySelector("#metric-water-source");
 const metricSize = document.querySelector("#metric-size");
@@ -52,6 +52,8 @@ const insightThreshold = document.querySelector("#insight-threshold");
 const insightMinArea = document.querySelector("#insight-min-area");
 const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
 const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
+const guidelineReportLink = document.querySelector("#guideline-report-link");
+const caseStudyReportLink = document.querySelector("#case-study-report-link");
 
 const map = L.map("selection-map", {
   zoomControl: true,
@@ -71,7 +73,6 @@ function setCoordinates(lat, lon, options = {}) {
   latInput.value = nextLat.toFixed(6);
   lonInput.value = nextLon.toFixed(6);
   marker.setLatLng([nextLat, nextLon]);
-  liveCoords.textContent = `${nextLat.toFixed(5)}, ${nextLon.toFixed(5)}`;
   if (options.pan !== false) {
     map.setView([nextLat, nextLon], options.zoom ?? Math.max(map.getZoom(), 10), { animate: true });
   }
@@ -95,8 +96,20 @@ function selectTab(targetId) {
     panel.classList.toggle("is-active", panel.id === targetId);
   });
   if (targetId === "preview-panel") {
+    ensurePreviewLoaded();
     document.querySelector("#preview-panel").scrollIntoView({ behavior: "smooth", block: "start" });
   }
+}
+
+function ensurePreviewLoaded(force = false) {
+  if (!state.previewUrl) {
+    return;
+  }
+  if (!force && state.previewLoadedUrl === state.previewUrl) {
+    return;
+  }
+  previewFrame.src = `${state.previewUrl}?t=${Date.now()}`;
+  state.previewLoadedUrl = state.previewUrl;
 }
 
 function syncSummary(payload) {
@@ -111,6 +124,16 @@ function syncSummary(payload) {
   insightRaster.textContent = payload.communities_raster || "Not set";
   insightThreshold.textContent = String(payload.community_threshold);
   insightMinArea.textContent = `${payload.min_community_area_m2} mÂ²`;
+}
+
+function setReportLink(link, report, unavailableMessage) {
+  const available = Boolean(report?.available && report?.url);
+  link.classList.toggle("is-disabled", !available);
+  link.setAttribute("aria-disabled", String(!available));
+  link.href = available ? report.url : "#";
+  link.target = available ? "_blank" : "";
+  link.rel = available ? "noopener" : "";
+  link.title = available ? `Open or download ${report.label}.` : unavailableMessage;
 }
 
 async function loadStatus() {
@@ -138,11 +161,21 @@ async function loadStatus() {
   glofasDaysInput.value = payload.defaults.glofas_days_back;
 
   syncSummary(readPayload());
+  setReportLink(
+    guidelineReportLink,
+    payload.documents?.guideline,
+    "The Romania legal guideline has not been generated yet."
+  );
+  setReportLink(
+    caseStudyReportLink,
+    payload.documents?.case_study,
+    "The feasibility case-study report will be available after processing."
+  );
 
   if (payload.has_preview && payload.preview_url) {
     state.previewUrl = payload.preview_url;
-    previewFrame.src = `${payload.preview_url}?t=${Date.now()}`;
-    setStatus("Current preview loaded. Adjust the coordinates or click Generate View for a fresh result.");
+    state.previewLoadedUrl = null;
+    setStatus("Current preview is ready. Open the Preview tab when you want to load it.");
   } else {
     setStatus("No generated preview yet. Choose a place and generate a new view.");
   }
@@ -203,6 +236,7 @@ async function generatePreview(event) {
     previewFrame.src = "about:blank";
     setTimeout(() => {
       previewFrame.src = `${result.index_url}?t=${Date.now()}`;
+      state.previewLoadedUrl = result.index_url;
       if (previewLoader) previewLoader.style.display = "none";
     }, 50);
 
@@ -226,13 +260,6 @@ function openCurrentPreview() {
   window.open(state.previewUrl, "_blank", "noopener");
 }
 
-function copyCoordinates() {
-  const text = `${latInput.value}, ${lonInput.value}`;
-  navigator.clipboard.writeText(text)
-    .then(() => setStatus(`Copied coordinates: ${text}`))
-    .catch(() => setStatus("Clipboard access failed.", true));
-}
-
 function resetForm() {
   const preset = presets.cluj;
   setCoordinates(preset.lat, preset.lon, { zoom: 10 });
@@ -253,23 +280,30 @@ document.querySelectorAll("[data-action=\"load-current-preview\"]").forEach((but
   button.addEventListener("click", () => {
   document.querySelector("#preview-panel").scrollIntoView({ behavior: "smooth", block: "start" });
   if (state.previewUrl) {
-    previewFrame.src = `${state.previewUrl}?t=${Date.now()}`;
+    ensurePreviewLoaded(true);
     setStatus("Current preview refreshed.");
   }
 });
 });
 
-document.querySelector("#copy-coords").addEventListener("click", copyCoordinates);
 document.querySelector("#open-preview-tab").addEventListener("click", openCurrentPreview);
 document.querySelector("#refresh-preview").addEventListener("click", () => {
   if (!state.previewUrl) {
     setStatus("There is no preview to refresh yet.", true);
     return;
   }
-  previewFrame.src = `${state.previewUrl}?t=${Date.now()}`;
+  ensurePreviewLoaded(true);
   setStatus("Preview frame refreshed.");
 });
 document.querySelector("#reset-btn").addEventListener("click", resetForm);
+[guidelineReportLink, caseStudyReportLink].forEach((link) => {
+  link.addEventListener("click", (event) => {
+    if (link.getAttribute("aria-disabled") === "true") {
+      event.preventDefault();
+      setStatus(link.title, true);
+    }
+  });
+});
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => selectTab(button.dataset.tabTarget));
 });

@@ -57,10 +57,17 @@
         </span>
       </a>
 
-      <div class="tab-strip" role="tablist" aria-label="Workspace tabs">
-        <button class="tab-btn is-active" type="button" data-tab-target="map-panel">Map</button>
-        <button class="tab-btn" type="button" data-tab-target="preview-panel">Preview</button>
-        <button class="tab-btn" type="button" data-tab-target="insights-panel">Data</button>
+      <div class="topbar-controls">
+        <div class="report-actions" aria-label="Generated reports">
+          <a class="report-btn is-disabled" id="guideline-report-link" href="#" aria-disabled="true" title="Open or download the Romania legal guideline">Guideline</a>
+          <a class="report-btn is-disabled" id="case-study-report-link" href="#" aria-disabled="true" title="Available after a feasibility case-study report is generated">Case Study</a>
+        </div>
+
+        <div class="tab-strip" role="tablist" aria-label="Workspace tabs">
+          <button class="tab-btn is-active" type="button" data-tab-target="map-panel">Map</button>
+          <button class="tab-btn" type="button" data-tab-target="preview-panel">Preview</button>
+          <button class="tab-btn" type="button" data-tab-target="insights-panel">Data</button>
+        </div>
       </div>
     </header>
 
@@ -70,7 +77,6 @@
           <div class="panel-header">
             <p class="eyebrow">Interactive Menu</p>
             <h2>Control Panel</h2>
-            <p class="panel-copy">Set the target area, choose the data source, and launch a new preview from the existing backend.</p>
           </div>
 
           <form id="generator-form" class="generator-form">
@@ -222,11 +228,7 @@
             <div class="card-head">
               <div>
                 <p class="eyebrow">Interactive Map</p>
-                <h2>Click anywhere to set the target place</h2>
-              </div>
-              <div class="mini-actions">
-                <p id="live-coords" class="mono"></p>
-                <button class="ghost-btn" id="copy-coords" type="button" title="Copy coordinates">Copy</button>
+                <h2 style="white-space: nowrap;">Click anywhere to set the target place</h2>
               </div>
             </div>
             <div id="selection-map" aria-label="Coordinate selection map"></div>
@@ -248,7 +250,7 @@
                 <div class="spinner"></div>
                 <p>Generating Geospatial Preview...</p>
               </div>
-              <iframe id="preview-frame" title="HeavyWater generated preview"></iframe>
+              <iframe id="preview-frame" title="HeavyWater generated preview" loading="lazy"></iframe>
             </div>
             <div class="metric-grid">
               <article class="metric-card">
@@ -277,22 +279,22 @@
               <article class="insight-card">
                 <span class="insight-label">Water Bodies</span>
                 <strong id="insight-water-source">OpenStreetMap Overpass</strong>
-                <p>Matches the backend `water_source` option exposed by the local preview server.</p>
+                <p>Controls the source of hydrological data. Options include live data from 'OpenStreetMap Overpass' or local high-resolution datasets like 'Local EuHydro'.</p>
               </article>
               <article class="insight-card">
                 <span class="insight-label">Communities Raster</span>
                 <strong id="insight-raster">Not set</strong>
-                <p>Optional local GeoTIFF path used to derive community polygons for the output map.</p>
+                <p>Points to a local GeoTIFF file representing populated areas. If provided, the generator overlays these boundaries directly onto the preview map.</p>
               </article>
               <article class="insight-card">
                 <span class="insight-label">Threshold</span>
                 <strong id="insight-threshold">1</strong>
-                <p>Controls how aggressively the raster is filtered before communities are extracted.</p>
+                <p>Determines the pixel intensity threshold for community extraction. Higher values filter out more noise, keeping only densely populated areas.</p>
               </article>
               <article class="insight-card">
                 <span class="insight-label">Minimum Area</span>
                 <strong id="insight-min-area">2000 m2</strong>
-                <p>Small isolated shapes below this limit are removed from the generated community layer.</p>
+                <p>Sets the minimum footprint for a community polygon. Any generated shape smaller than this area will be ignored, preventing tiny, irrelevant clusters.</p>
               </article>
             </div>
           </div>
