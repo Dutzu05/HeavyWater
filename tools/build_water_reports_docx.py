@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
@@ -43,6 +44,51 @@ COLORS = {
     "teal": RGBColor(34, 105, 112),
     "muted": RGBColor(88, 103, 112),
 }
+
+LEGAL_REFERENCES = [
+    {
+        "rule": "Legea apelor nr. 107/1996",
+        "source": "Portal Legislativ",
+        "url": "https://legislatie.just.ro/Public/DetaliiDocument/267923",
+        "applies": "Core water law for works built on, in, near, or functionally connected to water bodies.",
+        "check": "Confirm whether the canal, lake/reservoir, intake, dam, diversion, crossing, or abstraction falls under water-management endorsement/authorization.",
+    },
+    {
+        "rule": "Ordinul nr. 828/2019",
+        "source": "Portal Legislativ",
+        "url": "https://legislatie.just.ro/Public/DetaliiDocument/216574",
+        "applies": "Procedure, competence, technical-documentation content, and water-body impact study content for water-management endorsement.",
+        "check": "Build the technical file around hydrology, hydraulics, water-body impact, alternatives, and mitigation before the ABA/SGA submission.",
+    },
+    {
+        "rule": "Legea nr. 292/2018",
+        "source": "Portal Legislativ",
+        "url": "https://legislatie.just.ro/Public/DetaliiDocumentAfis/208590",
+        "applies": "Environmental impact assessment procedure for public/private projects likely to have significant environmental effects.",
+        "check": "Run environmental screening before final design; complete EIA where the competent authority requires it.",
+    },
+    {
+        "rule": "OUG nr. 57/2007",
+        "source": "Portal Legislativ",
+        "url": "https://legislatie.just.ro/Public/DetaliiDocument/100115",
+        "applies": "Protected areas and Natura 2000 appropriate assessment where a project may significantly affect a protected site.",
+        "check": "Screen the AOI and route/footprint against Natura 2000 and protected-area layers; avoid or assess significant effects.",
+    },
+    {
+        "rule": "Water Framework Directive 2000/60/EC",
+        "source": "EUR-Lex",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32000L0060",
+        "applies": "EU water-body objectives, including no deterioration and good ecological/chemical status principles.",
+        "check": "Show that the selected option does not deteriorate water-body status or justify any lawful exception through the formal procedure.",
+    },
+    {
+        "rule": "Habitats Directive 92/43/EEC",
+        "source": "EUR-Lex",
+        "url": "https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=CELEX%3A31992L0043",
+        "applies": "Natura 2000 conservation and appropriate-assessment principles.",
+        "check": "If protected habitats/species can be affected, the project must pass appropriate assessment before approval.",
+    },
+]
 
 
 def configure_doc(doc: Document, title: str) -> None:
@@ -133,6 +179,36 @@ def add_numbered(doc: Document, items: list[str]) -> None:
         p = doc.add_paragraph(style="List Number")
         p.paragraph_format.space_after = Pt(1.5)
         p.add_run(item)
+
+
+def add_table(doc: Document, headers: list[str], rows: list[list[str]], widths_cm: list[float] | None = None) -> None:
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.style = "Table Grid"
+    header_cells = table.rows[0].cells
+    for index, header in enumerate(headers):
+        header_cells[index].text = header
+        header_cells[index].vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+        for paragraph in header_cells[index].paragraphs:
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(8.5)
+                run.font.color.rgb = COLORS["ink"]
+        if widths_cm:
+            header_cells[index].width = Cm(widths_cm[index])
+    for row in rows:
+        cells = table.add_row().cells
+        for index, value in enumerate(row):
+            cells[index].text = str(value)
+            cells[index].vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            if widths_cm:
+                cells[index].width = Cm(widths_cm[index])
+            for paragraph in cells[index].paragraphs:
+                paragraph.paragraph_format.space_after = Pt(0)
+                for run in paragraph.runs:
+                    run.font.size = Pt(8)
+    doc.add_paragraph()
 
 
 def add_record(doc: Document, title: str, fields: list[tuple[str, str]]) -> None:
@@ -266,11 +342,16 @@ def build_guideline() -> Path:
         ],
     )
 
-    doc.add_heading("6. Guideline Conclusion", level=1)
+    doc.add_heading("6. Rules to Apply and Bibliography", level=1)
     doc.add_paragraph(
-        "The legal guideline should remain stable and reusable across Romanian projects. A separate technical case study "
-        "should be generated after the program selects a candidate canal or reservoir option from local terrain, soil, "
-        "water-source, demand, and stability data."
+        "Apply these checks before accepting any HeavyWater recommendation as a project candidate. "
+        "The URLs point to the legal source or official EU legal text used for the planning rule."
+    )
+    add_legal_reference_records(doc)
+
+    doc.add_heading("7. Guideline Conclusion", level=1)
+    doc.add_paragraph(
+        "Use this guideline as the reusable legal checklist, then use the generated report for the selected canal or lake/reservoir candidate."
     )
 
     doc.core_properties.title = "Romania Water Legal Guideline"
@@ -302,6 +383,101 @@ def choose_candidate(canals: list[dict], sites: list[dict]) -> tuple[str, dict |
     if best_site:
         return "reservoir", best_site
     return "none", None
+
+
+def feature_props(feature: dict | None) -> dict:
+    return (feature or {}).get("properties") or {}
+
+
+def build_candidate_rows(features: list[dict], kind: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for index, feature in enumerate(features, start=1):
+        props = feature_props(feature)
+        if kind == "canal":
+            length = props.get("canal_length_m")
+            gravity = props.get("gravity_feasibility_pct")
+            soil = props.get("route_seepage_class")
+            ksat = props.get("route_ksat_mm_per_hour")
+            clay = props.get("route_clay_pct")
+            sand = props.get("route_sand_pct")
+            silt = props.get("route_silt_pct")
+        else:
+            length = props.get("feed_canal_length_m")
+            gravity = props.get("gravity_feasibility_pct")
+            soil = props.get("seepage_class")
+            ksat = props.get("ksat_mm_per_hour")
+            clay = props.get("clay_pct")
+            sand = props.get("sand_pct")
+            silt = props.get("silt_pct")
+        rows.append(
+            [
+                f"{kind.title()} {index}",
+                props.get("decision", "[no decision]"),
+                format_number(props.get("option_score"), 1),
+                format_number(length, 0, " m"),
+                format_number(gravity, 1, "%"),
+                format_number(props.get("demand_m3_day"), 1, " m3/day"),
+                format_number(props.get("supply_discharge_m3s"), 3, " m3/s"),
+                f"{format_number(clay, 1, '%')} / {format_number(sand, 1, '%')} / {format_number(silt, 1, '%')}",
+                f"{available_text(soil, 'n/a')} ({format_number(ksat, 2, ' mm/h')})",
+            ]
+        )
+    return rows
+
+
+def add_candidate_records(doc: Document, features: list[dict], kind: str) -> None:
+    if not features:
+        doc.add_paragraph(f"No {kind} candidate was generated in the latest run.")
+        return
+    for index, feature in enumerate(features, start=1):
+        props = feature_props(feature)
+        if kind == "canal":
+            length = props.get("canal_length_m")
+            gravity = props.get("gravity_feasibility_pct")
+            soil = props.get("route_seepage_class")
+            ksat = props.get("route_ksat_mm_per_hour")
+            clay = props.get("route_clay_pct")
+            sand = props.get("route_sand_pct")
+            silt = props.get("route_silt_pct")
+            behavior = props.get("route_soil_behavior")
+        else:
+            length = props.get("feed_canal_length_m")
+            gravity = props.get("gravity_feasibility_pct")
+            soil = props.get("seepage_class")
+            ksat = props.get("ksat_mm_per_hour")
+            clay = props.get("clay_pct")
+            sand = props.get("sand_pct")
+            silt = props.get("silt_pct")
+            behavior = props.get("engineering_note")
+        add_record(
+            doc,
+            f"{kind.title()} option {index}",
+            [
+                ("Decision", available_text(props.get("decision"), "[no decision]")),
+                ("Score", format_number(props.get("option_score"), 1)),
+                ("Length", format_number(length, 0, " m")),
+                ("Gravity feasibility", format_number(gravity, 1, "%")),
+                ("Demand", format_number(props.get("demand_m3_day"), 1, " m3/day")),
+                ("Flow rate", format_number(props.get("supply_discharge_m3s"), 3, " m3/s")),
+                ("Available flow", format_number(props.get("supply_m3_day"), 1, " m3/day")),
+                ("Soil composition", f"clay {format_number(clay, 1, '%')}; sand {format_number(sand, 1, '%')}; silt {format_number(silt, 1, '%')}"),
+                ("Seepage / Ksat", f"{available_text(soil, 'n/a')}; {format_number(ksat, 2, ' mm/h')}"),
+                ("Soil meaning", available_text(behavior, "Soil interpretation unavailable.")),
+                ("Reason", available_text(props.get("decision_reason"), "No decision reason was generated.")),
+            ],
+        )
+
+
+def add_legal_reference_records(doc: Document, include_url: bool = True) -> None:
+    for item in LEGAL_REFERENCES:
+        fields = [
+            ("Source", item["source"]),
+            ("Rule to apply", item["check"]),
+            ("Why it matters", item["applies"]),
+        ]
+        if include_url:
+            fields.append(("URL", item["url"]))
+        add_record(doc, item["rule"], fields)
 
 
 def find_demand_row(summary: dict, demand_id: str | None) -> dict:
@@ -363,6 +539,30 @@ def feasibility_rating(score: float | None) -> str:
     if score >= 45:
         return "High risk"
     return "Not recommended"
+
+
+def selected_option_metrics(candidate_kind: str, props: dict) -> dict:
+    if candidate_kind == "reservoir":
+        return {
+            "length": props.get("feed_canal_length_m"),
+            "gravity": props.get("gravity_feasibility_pct"),
+            "slope": props.get("local_slope_deg"),
+            "soil_behavior": props.get("engineering_note"),
+            "ksat": props.get("ksat_mm_per_hour"),
+            "clay": props.get("clay_pct"),
+            "sand": props.get("sand_pct"),
+            "silt": props.get("silt_pct"),
+        }
+    return {
+        "length": props.get("canal_length_m"),
+        "gravity": props.get("gravity_feasibility_pct"),
+        "slope": props.get("mean_route_slope_deg"),
+        "soil_behavior": props.get("route_soil_behavior"),
+        "ksat": props.get("route_ksat_mm_per_hour"),
+        "clay": props.get("route_clay_pct"),
+        "sand": props.get("route_sand_pct"),
+        "silt": props.get("route_silt_pct"),
+    }
 
 
 def sample_route_profile(route_coords: list[list[float]], dem_path: Path) -> list[tuple[float, float]]:
@@ -512,16 +712,17 @@ def build_case_study() -> Path:
     sites = load_geojson_features(SITES_PATH)
     candidate_kind, candidate = choose_candidate(canals, sites)
     props = (candidate or {}).get("properties") or {}
+    selected_metrics = selected_option_metrics(candidate_kind, props)
     demand_id = props.get("demand_id")
     demand_row = find_demand_row(water_risk_summary, demand_id)
     route_path, profile_path = make_case_study_diagrams(candidate_kind, candidate, demand_row, report_inputs)
     soil_summary = (report_inputs.get("soil") or {}) if isinstance(report_inputs.get("soil"), dict) else {}
 
     doc = Document()
-    configure_doc(doc, "Technical Feasibility Case Study")
+    configure_doc(doc, "Technical Feasibility Report")
     add_title(
         doc,
-        "Technical Feasibility Case Study",
+        "Technical Feasibility Report",
         "Latest processed canal or reservoir recommendation generated from HeavyWater outputs",
         "This report is filled from the latest HeavyWater processing outputs. Any field that remains unavailable marks a real gap in the current fetch or analysis chain and should be completed during the formal study stage.",
     )
@@ -532,6 +733,7 @@ def build_case_study() -> Path:
         "Recommended alternative",
         [
             ("Selected option", available_text(props.get("decision"), "No candidate selected in the latest run")),
+            ("Selected geometry type", "Canal" if candidate_kind == "canal" else "Lake / reservoir" if candidate_kind == "reservoir" else "No geometry selected"),
             ("Region", f"AOI near {report_inputs.get('location', {}).get('lat', '[lat]')}, {report_inputs.get('location', {}).get('lon', '[lon]')}"),
             ("Primary purpose", "Community water supply" if water_risk_summary.get("mode") == "community" else "Farm water supply"),
             ("Feasibility rating", feasibility_rating(props.get("option_score"))),
@@ -552,7 +754,14 @@ def build_case_study() -> Path:
         ],
     )
 
-    doc.add_heading("3. Proposed Geometry", level=1)
+    doc.add_heading("3. Candidate Options Generated", level=1)
+    if canals or sites:
+        add_candidate_records(doc, canals, "canal")
+        add_candidate_records(doc, sites, "lake")
+    else:
+        doc.add_paragraph("No canal or lake/reservoir candidate was generated in the latest run.")
+
+    doc.add_heading("4. Proposed Geometry", level=1)
     add_record(
         doc,
         "Canal option",
@@ -570,7 +779,7 @@ def build_case_study() -> Path:
         doc,
         "Reservoir option",
         [
-            ("Footprint", "No reservoir candidate was selected in the latest run." if candidate_kind != "reservoir" else "Selected reservoir polygon exists; formal area computation should be exported from the selected geometry."),
+            ("Footprint", "No reservoir candidate was selected in the latest run." if candidate_kind != "reservoir" else "Selected lake/reservoir polygon is visible on the map and stored in the latest GeoJSON output."),
             ("Storage volume", "Storage model not yet implemented in the current processing chain."),
             ("Maximum water depth", format_number(props.get("basin_depth_m"), 1, " m")),
             ("Embankment/dam height", "Dam/embankment height not derived because no reservoir geometry was selected."),
@@ -593,7 +802,7 @@ def build_case_study() -> Path:
     cap.runs[0].font.size = Pt(8.5)
     cap.runs[0].font.italic = True
 
-    doc.add_heading("4. Water Source Impact", level=1)
+    doc.add_heading("5. Water Source Impact", level=1)
     add_record(
         doc,
         "Source balance",
@@ -614,7 +823,7 @@ def build_case_study() -> Path:
         ],
     )
 
-    doc.add_heading("5. Terrain, Soil, and Movement Findings", level=1)
+    doc.add_heading("6. Terrain, Soil, and Movement Findings", level=1)
     add_record(
         doc,
         "Terrain",
@@ -628,12 +837,12 @@ def build_case_study() -> Path:
         doc,
         "Soil composition",
         [
-            ("Clay", format_number(soil_summary.get("clay_pct"), 1, "%")),
-            ("Sand", format_number(soil_summary.get("sand_pct"), 1, "%")),
-            ("Silt", format_number(soil_summary.get("silt_pct"), 1, "%")),
+            ("Clay", format_number(selected_metrics.get("clay") or soil_summary.get("clay_pct"), 1, "%")),
+            ("Sand", format_number(selected_metrics.get("sand") or soil_summary.get("sand_pct"), 1, "%")),
+            ("Silt", format_number(selected_metrics.get("silt") or soil_summary.get("silt_pct"), 1, "%")),
             ("Organic matter", format_number(soil_summary.get("organic_matter_pct"), 1, "%")),
-            ("Ksat/permeability", format_number(props.get("route_ksat_mm_per_hour") or props.get("ksat_mm_per_hour") or soil_summary.get("ksat_mm_per_hour"), 2, " mm/h")),
-            ("Engineering meaning", available_text(props.get("route_soil_behavior") or props.get("engineering_note") or soil_summary.get("engineering_note") or soil_summary.get("error"), "Soil interpretation was not completed in the latest run.")),
+            ("Ksat/permeability", format_number(selected_metrics.get("ksat") or soil_summary.get("ksat_mm_per_hour"), 2, " mm/h")),
+            ("Engineering meaning", available_text(selected_metrics.get("soil_behavior") or soil_summary.get("engineering_note") or soil_summary.get("error"), "Soil interpretation was not completed in the latest run.")),
         ],
     )
     add_record(
@@ -647,7 +856,7 @@ def build_case_study() -> Path:
         ],
     )
 
-    doc.add_heading("6. Community or Farm Impact", level=1)
+    doc.add_heading("7. Community or Farm Impact", level=1)
     add_bullets(
         doc,
         [
@@ -659,7 +868,10 @@ def build_case_study() -> Path:
         ],
     )
 
-    doc.add_heading("7. Feasibility Decision", level=1)
+    doc.add_heading("8. Legal Applicability Checklist", level=1)
+    add_legal_reference_records(doc, include_url=False)
+
+    doc.add_heading("9. Feasibility Decision", level=1)
     add_record(
         doc,
         "Decision statement",
@@ -670,7 +882,7 @@ def build_case_study() -> Path:
         ],
     )
 
-    doc.core_properties.title = "Technical Feasibility Case Study"
+    doc.core_properties.title = "Technical Feasibility Report"
     doc.core_properties.subject = "Canal or reservoir feasibility generated from HeavyWater outputs"
     doc.save(CASE_STUDY_PATH)
     return CASE_STUDY_PATH

@@ -99,6 +99,7 @@ def run_pipeline(
 ) -> PipelineOutputs:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    terrain_required_by_user = include_terrain
     bbox_wgs84 = build_bbox(lat, lon, size_km=size_km)
     aoi_wgs84 = bbox_polygon_wgs84(bbox_wgs84)
 
@@ -140,13 +141,18 @@ def run_pipeline(
 
     terrain_result: TerrainResult | None = None
     if include_terrain:
-        terrain_result = fetch_terrain_for_aoi(
-            bbox_wgs84=bbox_wgs84,
-            dem_output_path=output_dir / TERRAIN_DEM_NAME,
-            hillshade_output_path=output_dir / TERRAIN_HILLSHADE_NAME,
-            summary_output_path=output_dir / TERRAIN_SUMMARY_NAME,
-            resolution_m=terrain_resolution_m,
-        )
+        try:
+            terrain_result = fetch_terrain_for_aoi(
+                bbox_wgs84=bbox_wgs84,
+                dem_output_path=output_dir / TERRAIN_DEM_NAME,
+                hillshade_output_path=output_dir / TERRAIN_HILLSHADE_NAME,
+                summary_output_path=output_dir / TERRAIN_SUMMARY_NAME,
+                resolution_m=terrain_resolution_m,
+            )
+        except Exception:
+            if terrain_required_by_user:
+                raise
+            terrain_result = None
 
     stability_result: StabilityResult | None = None
     if include_stability:

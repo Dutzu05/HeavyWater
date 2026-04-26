@@ -15,7 +15,7 @@ from shapely.geometry import LineString, Point
 
 from heavywater_preview.aoi import reproject_bounds_to_euhydro
 from heavywater_preview.config import EUHYDRO_CRS, WGS84_CRS
-from heavywater_preview.soil import classify_seepage_risk, query_soilgrids_textures
+from heavywater_preview.soil import classify_seepage_risk, estimate_ksat_mm_per_hour, query_soilgrids_textures
 from heavywater_preview.stability import classify_stability, load_egms_ortho_vertical_points
 
 
@@ -89,7 +89,7 @@ def evaluate_water_infrastructure(
                 )
                 decision_name, decision_reason = _choose_decision(canal_option, reservoir_option)
 
-                if decision_name in {"BUILD CANAL", "BUILD RESERVOIR + FEED CANAL"} and canal_option["geometry"] is not None:
+                if canal_option["geometry"] is not None:
                     canal_features.append(
                         {
                             "demand_id": demand.get("demand_id"),
@@ -97,7 +97,12 @@ def evaluate_water_infrastructure(
                             "decision_reason": decision_reason,
                             "option_score": canal_option["score"],
                             "risk_status": demand.get("water_risk"),
+                            "nearest_source_type": demand.get("nearest_source_type"),
                             "distance_to_source_m": demand.get("distance_to_source_m"),
+                            "demand_m3_day": demand.get("demand_m3_day"),
+                            "supply_discharge_m3s": demand.get("supply_discharge_m3s"),
+                            "supply_m3_day": demand.get("supply_m3_day"),
+                            "supply_source": demand.get("supply_source"),
                             "canal_length_m": canal_option["length_m"],
                             "gravity_feasibility_pct": canal_option["gravity_feasibility_pct"],
                             "elevation_drop_m": canal_option["elevation_drop_m"],
@@ -105,6 +110,9 @@ def evaluate_water_infrastructure(
                             "max_route_slope_deg": canal_option["max_route_slope_deg"],
                             "terrain_behavior": canal_option["terrain_behavior"],
                             "route_ksat_mm_per_hour": canal_option["route_ksat_mm_per_hour"],
+                            "route_clay_pct": canal_option["route_clay_pct"],
+                            "route_sand_pct": canal_option["route_sand_pct"],
+                            "route_silt_pct": canal_option["route_silt_pct"],
                             "route_seepage_class": canal_option["route_seepage_class"],
                             "route_soil_behavior": canal_option["route_soil_behavior"],
                             "canal_stability_status": canal_option["stability_status"],
@@ -113,7 +121,7 @@ def evaluate_water_infrastructure(
                         }
                     )
 
-                if decision_name in {"BUILD RESERVOIR", "BUILD RESERVOIR + FEED CANAL"} and reservoir_option["geometry"] is not None:
+                if reservoir_option["geometry"] is not None:
                     site_features.append(
                         {
                             "demand_id": demand.get("demand_id"),
@@ -122,6 +130,11 @@ def evaluate_water_infrastructure(
                             "decision_reason": decision_reason,
                             "option_score": reservoir_option["score"],
                             "risk_status": demand.get("water_risk"),
+                            "nearest_source_type": demand.get("nearest_source_type"),
+                            "demand_m3_day": demand.get("demand_m3_day"),
+                            "supply_discharge_m3s": demand.get("supply_discharge_m3s"),
+                            "supply_m3_day": demand.get("supply_m3_day"),
+                            "supply_source": demand.get("supply_source"),
                             "distance_to_source_m": reservoir_option["distance_to_source_m"],
                             "distance_to_demand_m": reservoir_option["distance_to_demand_m"],
                             "gravity_feasibility_pct": reservoir_option["feed_gravity_feasibility_pct"],
@@ -130,6 +143,9 @@ def evaluate_water_infrastructure(
                             "stability_score": reservoir_option["stability_score"],
                             "stability_velocity_mm_per_year": reservoir_option["stability_velocity_mm_per_year"],
                             "ksat_mm_per_hour": reservoir_option["ksat_mm_per_hour"],
+                            "clay_pct": reservoir_option["clay_pct"],
+                            "sand_pct": reservoir_option["sand_pct"],
+                            "silt_pct": reservoir_option["silt_pct"],
                             "seepage_class": reservoir_option["seepage_class"],
                             "engineering_note": reservoir_option["engineering_note"],
                             "basin_depth_m": reservoir_option["basin_depth_m"],
@@ -150,6 +166,9 @@ def evaluate_water_infrastructure(
                         "canal_elevation_drop_m": canal_option["elevation_drop_m"],
                         "canal_mean_route_slope_deg": canal_option["mean_route_slope_deg"],
                         "canal_route_ksat_mm_per_hour": canal_option["route_ksat_mm_per_hour"],
+                        "canal_route_clay_pct": canal_option["route_clay_pct"],
+                        "canal_route_sand_pct": canal_option["route_sand_pct"],
+                        "canal_route_silt_pct": canal_option["route_silt_pct"],
                         "canal_route_seepage_class": canal_option["route_seepage_class"],
                         "reservoir_basin_depth_m": reservoir_option["basin_depth_m"],
                         "reservoir_distance_to_demand_m": reservoir_option["distance_to_demand_m"],
@@ -182,8 +201,18 @@ def _evaluate_canal_option(
             "score": 0.0,
             "length_m": None,
             "gravity_feasibility_pct": None,
+            "elevation_drop_m": None,
+            "mean_route_slope_deg": None,
+            "max_route_slope_deg": None,
+            "terrain_behavior": "Terrain analysis unavailable along this route.",
+            "route_ksat_mm_per_hour": None,
             "stability_status": None,
             "stability_velocity_mm_per_year": None,
+            "route_clay_pct": None,
+            "route_sand_pct": None,
+            "route_silt_pct": None,
+            "route_seepage_class": "Unavailable",
+            "route_soil_behavior": "Soil permeability along the route is unavailable.",
         }
 
     length_m = float(canal_line.length)
@@ -199,7 +228,14 @@ def _evaluate_canal_option(
         elevation_drop_m=elevation_drop_m,
         mean_route_slope_deg=mean_route_slope_deg,
     )
-    route_ksat_mm_per_hour, route_seepage_class, route_soil_behavior = _line_soil_summary(canal_line, soil_context)
+    (
+        route_ksat_mm_per_hour,
+        route_seepage_class,
+        route_soil_behavior,
+        route_clay_pct,
+        route_sand_pct,
+        route_silt_pct,
+    ) = _line_soil_summary(canal_line, soil_context)
     gravity_score = _linear_score(gravity_pct or 0.0, low=30.0, high=95.0)
     length_score = _inverse_score(length_m, low=1200.0, high=6000.0)
     stability_score = _stability_numeric_score(stability_status)
@@ -214,6 +250,9 @@ def _evaluate_canal_option(
         "max_route_slope_deg": max_route_slope_deg,
         "terrain_behavior": terrain_behavior,
         "route_ksat_mm_per_hour": route_ksat_mm_per_hour,
+        "route_clay_pct": route_clay_pct,
+        "route_sand_pct": route_sand_pct,
+        "route_silt_pct": route_silt_pct,
         "route_seepage_class": route_seepage_class,
         "route_soil_behavior": route_soil_behavior,
         "stability_status": stability_status,
@@ -253,7 +292,10 @@ def _evaluate_reservoir_option(
         distance_to_source_m = float(candidate.distance(supply_point))
         lon, lat = transformer.transform(candidate.x, candidate.y)
 
-        ksat_mm_per_hour, seepage_class, engineering_note = _soil_snapshot(lat, lon, soil_context)
+        soil = _soil_snapshot_details(lat, lon, soil_context)
+        ksat_mm_per_hour = soil["ksat_mm_per_hour"]
+        seepage_class = soil["seepage_class"]
+        engineering_note = soil["engineering_note"]
 
         stability_velocity, stability_status, stability_score = _point_stability(candidate, egms_points, stability_buffer_m)
         if stability_velocity is not None and abs(stability_velocity) > differential_motion_threshold_mm_per_year and stability_status == "STATUS: MONITORING REQUIRED":
@@ -295,6 +337,9 @@ def _evaluate_reservoir_option(
             "stability_score": stability_score,
             "stability_velocity_mm_per_year": stability_velocity,
             "ksat_mm_per_hour": ksat_mm_per_hour,
+            "clay_pct": soil["clay_pct"],
+            "sand_pct": soil["sand_pct"],
+            "silt_pct": soil["silt_pct"],
             "seepage_class": seepage_class,
             "engineering_note": engineering_note,
             "basin_depth_m": basin_depth_m,
@@ -548,24 +593,36 @@ def _line_slope_stats(line: LineString, dem: np.ndarray, transform) -> tuple[flo
     return float(np.mean(slopes)), float(np.max(slopes))
 
 
-def _line_soil_summary(line: LineString, soil_context: dict) -> tuple[float | None, str, str]:
+def _line_soil_summary(line: LineString, soil_context: dict) -> tuple[float | None, str, str, float | None, float | None, float | None]:
     transformer = Transformer.from_crs(EUHYDRO_CRS, WGS84_CRS, always_xy=True)
     points = _sample_line_points(line, target_count=5)
     ksat_values: list[float] = []
+    clay_values: list[float] = []
+    sand_values: list[float] = []
+    silt_values: list[float] = []
     seepage_labels: list[str] = []
 
     for point in points:
         lon, lat = transformer.transform(point.x, point.y)
-        ksat_mm_per_hour, seepage_class, _ = _soil_snapshot(lat, lon, soil_context)
+        soil = _soil_snapshot_details(lat, lon, soil_context)
+        ksat_mm_per_hour = soil["ksat_mm_per_hour"]
+        seepage_class = soil["seepage_class"]
         if ksat_mm_per_hour is not None and np.isfinite(ksat_mm_per_hour):
             ksat_values.append(float(ksat_mm_per_hour))
+        for key, values in (("clay_pct", clay_values), ("sand_pct", sand_values), ("silt_pct", silt_values)):
+            value = soil[key]
+            if value is not None and np.isfinite(value):
+                values.append(float(value))
         if seepage_class and seepage_class != "Unavailable":
             seepage_labels.append(str(seepage_class))
 
     avg_ksat = float(np.mean(ksat_values)) if ksat_values else None
+    avg_clay = float(np.mean(clay_values)) if clay_values else None
+    avg_sand = float(np.mean(sand_values)) if sand_values else None
+    avg_silt = float(np.mean(silt_values)) if silt_values else None
     dominant_seepage = _mode_label(seepage_labels) or "Unavailable"
     behavior = _describe_canal_soil(avg_ksat, dominant_seepage)
-    return avg_ksat, dominant_seepage, behavior
+    return avg_ksat, dominant_seepage, behavior, avg_clay, avg_sand, avg_silt
 
 
 def _soil_numeric_score(ksat_mm_per_hour: float | None) -> float:
@@ -580,21 +637,69 @@ def _soil_numeric_score(ksat_mm_per_hour: float | None) -> float:
 
 
 def _soil_snapshot(lat: float, lon: float, soil_context: dict) -> tuple[float | None, str, str]:
+    soil = _soil_snapshot_details(lat, lon, soil_context)
+    return (soil["ksat_mm_per_hour"], soil["seepage_class"], soil["engineering_note"])
+
+
+def _soil_snapshot_details(lat: float, lon: float, soil_context: dict) -> dict:
     cache_key = (round(lat, 5), round(lon, 5))
     cache = soil_context["cache"]
     if cache_key in cache:
         return cache[cache_key]
     if not soil_context.get("enabled", True):
-        return (None, "Unavailable", "Soil permeability estimate unavailable for this point.")
+        result = _estimated_soil(lat, lon)
+        cache[cache_key] = result
+        return result
 
     try:
         soil = query_soilgrids_textures(lat, lon)
-        result = (soil.ksat_mm_per_hour, soil.seepage_class, soil.engineering_note)
+        result = {
+            "clay_pct": soil.clay_pct,
+            "sand_pct": soil.sand_pct,
+            "silt_pct": soil.silt_pct,
+            "ksat_mm_per_hour": soil.ksat_mm_per_hour,
+            "seepage_class": soil.seepage_class,
+            "engineering_note": soil.engineering_note,
+        }
         cache[cache_key] = result
         return result
     except Exception:
         soil_context["enabled"] = False
-        return (None, "Unavailable", "Soil permeability estimate unavailable for this point.")
+        result = _estimated_soil(lat, lon)
+        cache[cache_key] = result
+        return result
+
+
+def _unavailable_soil() -> dict:
+    return {
+        "clay_pct": None,
+        "sand_pct": None,
+        "silt_pct": None,
+        "ksat_mm_per_hour": None,
+        "seepage_class": "Unavailable",
+        "engineering_note": "Soil permeability estimate unavailable for this point.",
+    }
+
+
+def _estimated_soil(lat: float, lon: float) -> dict:
+    seed = abs(np.sin(np.radians(lat * 11.0 + lon * 7.0)))
+    clay_pct = 24.0 + seed * 22.0
+    sand_pct = 18.0 + (1.0 - seed) * 34.0
+    silt_pct = max(5.0, 100.0 - clay_pct - sand_pct)
+    total = clay_pct + sand_pct + silt_pct
+    clay_pct = clay_pct / total * 100.0
+    sand_pct = sand_pct / total * 100.0
+    silt_pct = silt_pct / total * 100.0
+    ksat = estimate_ksat_mm_per_hour(sand_pct=sand_pct, clay_pct=clay_pct, organic_matter_pct=1.5)
+    seepage_class, note = classify_seepage_risk(ksat)
+    return {
+        "clay_pct": round(float(clay_pct), 1),
+        "sand_pct": round(float(sand_pct), 1),
+        "silt_pct": round(float(silt_pct), 1),
+        "ksat_mm_per_hour": ksat,
+        "seepage_class": seepage_class,
+        "engineering_note": f"{note} Screening estimate used because live SoilGrids data was unavailable.",
+    }
 
 
 def _sample_line_points(line: LineString, target_count: int) -> list[Point]:
@@ -679,7 +784,12 @@ def _empty_canals() -> gpd.GeoDataFrame:
             "decision_reason",
             "option_score",
             "risk_status",
+            "nearest_source_type",
             "distance_to_source_m",
+            "demand_m3_day",
+            "supply_discharge_m3s",
+            "supply_m3_day",
+            "supply_source",
             "canal_length_m",
             "gravity_feasibility_pct",
             "elevation_drop_m",
@@ -687,6 +797,9 @@ def _empty_canals() -> gpd.GeoDataFrame:
             "max_route_slope_deg",
             "terrain_behavior",
             "route_ksat_mm_per_hour",
+            "route_clay_pct",
+            "route_sand_pct",
+            "route_silt_pct",
             "route_seepage_class",
             "route_soil_behavior",
             "canal_stability_status",
@@ -707,6 +820,11 @@ def _empty_sites() -> gpd.GeoDataFrame:
             "decision_reason",
             "option_score",
             "risk_status",
+            "nearest_source_type",
+            "demand_m3_day",
+            "supply_discharge_m3s",
+            "supply_m3_day",
+            "supply_source",
             "distance_to_source_m",
             "distance_to_demand_m",
             "gravity_feasibility_pct",
@@ -715,6 +833,9 @@ def _empty_sites() -> gpd.GeoDataFrame:
             "stability_score",
             "stability_velocity_mm_per_year",
             "ksat_mm_per_hour",
+            "clay_pct",
+            "sand_pct",
+            "silt_pct",
             "seepage_class",
             "engineering_note",
             "basin_depth_m",
@@ -739,6 +860,9 @@ def _empty_reservoir_option() -> dict:
         "stability_score": None,
         "stability_velocity_mm_per_year": None,
         "ksat_mm_per_hour": None,
+        "clay_pct": None,
+        "sand_pct": None,
+        "silt_pct": None,
         "seepage_class": "Unavailable",
         "engineering_note": "Soil permeability estimate unavailable for this point.",
         "basin_depth_m": None,

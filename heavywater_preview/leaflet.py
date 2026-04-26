@@ -124,12 +124,18 @@ def write_preview_map(
         risk_group.add_to(fmap)
 
     if canal_paths is not None and not canal_paths.empty:
-        canal_group = folium.FeatureGroup(name="Recommended Canal", show=True)
+        canal_group = folium.FeatureGroup(name="Recommended Canal Option", show=True)
         canal_fields = [
             field
             for field in (
                 "decision",
                 "option_score",
+                "risk_status",
+                "nearest_source_type",
+                "demand_m3_day",
+                "supply_discharge_m3s",
+                "supply_m3_day",
+                "supply_source",
                 "canal_length_m",
                 "distance_to_source_m",
                 "gravity_feasibility_pct",
@@ -138,6 +144,9 @@ def write_preview_map(
                 "max_route_slope_deg",
                 "terrain_behavior",
                 "route_ksat_mm_per_hour",
+                "route_clay_pct",
+                "route_sand_pct",
+                "route_silt_pct",
                 "route_seepage_class",
                 "route_soil_behavior",
                 "canal_stability_status",
@@ -149,6 +158,12 @@ def write_preview_map(
         canal_aliases = {
             "decision": "Decision",
             "option_score": "Canal score",
+            "risk_status": "Risk status",
+            "nearest_source_type": "Water source type",
+            "demand_m3_day": "Demand (m3/day)",
+            "supply_discharge_m3s": "Flow rate (m3/s)",
+            "supply_m3_day": "Available flow (m3/day)",
+            "supply_source": "Flow source",
             "canal_length_m": "Canal length (m)",
             "distance_to_source_m": "Distance to source (m)",
             "gravity_feasibility_pct": "Gravity feasibility %",
@@ -157,6 +172,9 @@ def write_preview_map(
             "max_route_slope_deg": "Max route slope (deg)",
             "terrain_behavior": "Terrain behavior",
             "route_ksat_mm_per_hour": "Route Ksat (mm/h)",
+            "route_clay_pct": "Route clay %",
+            "route_sand_pct": "Route sand %",
+            "route_silt_pct": "Route silt %",
             "route_seepage_class": "Route seepage class",
             "route_soil_behavior": "Soil behavior",
             "canal_stability_status": "Stability safety rating",
@@ -176,12 +194,18 @@ def write_preview_map(
         canal_group.add_to(fmap)
 
     if feasibility_sites is not None and not feasibility_sites.empty:
-        site_group = folium.FeatureGroup(name="Recommended Reservoir", show=True)
+        site_group = folium.FeatureGroup(name="Recommended Lake / Reservoir Option", show=True)
         site_fields = [
             field
             for field in (
                 "decision",
                 "option_score",
+                "risk_status",
+                "nearest_source_type",
+                "demand_m3_day",
+                "supply_discharge_m3s",
+                "supply_m3_day",
+                "supply_source",
                 "distance_to_demand_m",
                 "distance_to_source_m",
                 "gravity_feasibility_pct",
@@ -191,6 +215,9 @@ def write_preview_map(
                 "stability_status",
                 "stability_velocity_mm_per_year",
                 "ksat_mm_per_hour",
+                "clay_pct",
+                "sand_pct",
+                "silt_pct",
                 "seepage_class",
                 "engineering_note",
                 "decision_reason",
@@ -199,7 +226,13 @@ def write_preview_map(
         ]
         site_aliases = {
             "decision": "Decision",
-            "option_score": "Reservoir score",
+            "option_score": "Lake/reservoir score",
+            "risk_status": "Risk status",
+            "nearest_source_type": "Water source type",
+            "demand_m3_day": "Demand (m3/day)",
+            "supply_discharge_m3s": "Flow rate (m3/s)",
+            "supply_m3_day": "Available flow (m3/day)",
+            "supply_source": "Flow source",
             "distance_to_demand_m": "Distance to demand (m)",
             "distance_to_source_m": "Distance to source (m)",
             "gravity_feasibility_pct": "Feed gravity feasibility %",
@@ -209,6 +242,9 @@ def write_preview_map(
             "stability_status": "Stability safety rating",
             "stability_velocity_mm_per_year": "Mean movement (mm/year)",
             "ksat_mm_per_hour": "Ksat (mm/h)",
+            "clay_pct": "Clay %",
+            "sand_pct": "Sand %",
+            "silt_pct": "Silt %",
             "seepage_class": "Seepage class",
             "engineering_note": "Engineering note",
             "decision_reason": "Reason",
@@ -559,6 +595,9 @@ def _format_feasibility_properties(features):
         "option_score",
         "distance_to_source_m",
         "distance_to_demand_m",
+        "demand_m3_day",
+        "supply_discharge_m3s",
+        "supply_m3_day",
         "gravity_feasibility_pct",
         "feed_canal_length_m",
         "canal_length_m",
@@ -569,6 +608,12 @@ def _format_feasibility_properties(features):
         "stability_velocity_mm_per_year",
         "ksat_mm_per_hour",
         "route_ksat_mm_per_hour",
+        "route_clay_pct",
+        "route_sand_pct",
+        "route_silt_pct",
+        "clay_pct",
+        "sand_pct",
+        "silt_pct",
         "basin_depth_m",
         "local_slope_deg",
     ):

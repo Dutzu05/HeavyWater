@@ -3,6 +3,8 @@
 import json
 import mimetypes
 import os
+import subprocess
+import sys
 import textwrap
 from functools import partial
 from http import HTTPStatus
@@ -66,15 +68,15 @@ except ImportError:
     gpd = None
 
 try:
-    from tools.build_water_reports_docx import build_case_study, build_guideline
-except ImportError:
-    build_case_study = None
-    build_guideline = None
-
-try:
     from heavywater_preview.leaflet import write_preview_map
 except ImportError:
     write_preview_map = None
+
+try:
+    from heavywater_preview.mock_examples import find_mock_example, write_mock_outputs
+except ImportError:
+    find_mock_example = None
+    write_mock_outputs = None
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -88,6 +90,55 @@ OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 )
+
+
+def _bundled_document_python() -> Path | None:
+    candidate = (
+        Path.home()
+        / ".cache"
+        / "codex-runtimes"
+        / "codex-primary-runtime"
+        / "dependencies"
+        / "python"
+        / "python.exe"
+    )
+    return candidate if candidate.exists() else None
+
+
+try:
+    bundled_site_packages = (
+        Path.home()
+        / ".cache"
+        / "codex-runtimes"
+        / "codex-primary-runtime"
+        / "dependencies"
+        / "python"
+        / "Lib"
+        / "site-packages"
+    )
+    if bundled_site_packages.exists():
+        sys.path.insert(0, str(bundled_site_packages))
+    from tools.build_water_reports_docx import build_case_study, build_guideline
+except ImportError:
+    def _build_reports_with_bundled_python() -> None:
+        python_exe = _bundled_document_python()
+        if python_exe is None:
+            raise RuntimeError("Report generation requires python-docx or the bundled document Python runtime.")
+        subprocess.run(
+            [str(python_exe), str(PROJECT_ROOT / "tools" / "build_water_reports_docx.py")],
+            cwd=str(PROJECT_ROOT),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def build_guideline():
+        _build_reports_with_bundled_python()
+        return GUIDELINE_REPORT_PATH
+
+    def build_case_study():
+        _build_reports_with_bundled_python()
+        return CASE_STUDY_REPORT_PATH
 
 
 def _can_rebuild_preview_from_existing_outputs() -> bool:
@@ -682,7 +733,11 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
             payload = self._read_json_body()
             lat = self._require_float(payload, "lat")
             lon = self._require_float(payload, "lon")
+            if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+                raise ValueError("Latitude must be -90 to 90 and longitude must be -180 to 180.")
             size_km = self._optional_float(payload, "size_km", DEFAULT_BBOX_SIZE_KM)
+            if size_km <= 0:
+                raise ValueError("AOI size must be a positive number.")
             water_source = payload.get("water_source") or DEFAULT_WATER_SOURCE
             communities_raster = payload.get("communities_raster") or None
             community_threshold = self._optional_float(payload, "community_threshold", DEFAULT_COMMUNITY_THRESHOLD)
@@ -727,9 +782,13 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
             )
             include_water_risk = bool(payload.get("water_risk", False))
             water_risk_mode = payload.get("water_risk_mode") or "community"
+            if water_risk_mode not in {"community", "farm"}:
+                raise ValueError("Risk mode must be either 'community' or 'farm'.")
             farm_demand_m3_day = self._optional_float(
                 payload, "farm_demand_m3_day", DEFAULT_FARM_DEMAND_M3_DAY
             )
+            if include_water_risk and water_risk_mode == "farm" and farm_demand_m3_day <= 0:
+                raise ValueError("Farm demand must be greater than zero for farm risk mode.")
             cluster_pixel_area_m2 = self._optional_float(
                 payload, "cluster_pixel_area_m2", DEFAULT_COMMUNITY_PIXEL_AREA_M2
             )
@@ -740,7 +799,19 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                 payload, "glofas_days_back", float(DEFAULT_GLOFAS_DAYS_BACK)
             ))
 
-            if HAS_GIS_PIPELINE and run_pipeline:
+            mock_example = None
+            mock_writer = write_mock_outputs
+            try:
+                from heavywater_preview.mock_examples import find_mock_example as local_find_mock_example
+                from heavywater_preview.mock_examples import write_mock_outputs as local_write_mock_outputs
+
+                mock_example = local_find_mock_example(lat, lon)
+                mock_writer = local_write_mock_outputs
+            except Exception:
+                mock_example = find_mock_example(lat, lon) if find_mock_example else None
+            if mock_example and mock_writer:
+                outputs = mock_writer(example=mock_example, output_dir=OUTPUT_DIR, size_km=size_km)
+            elif HAS_GIS_PIPELINE and run_pipeline:
                 try:
                     outputs = run_pipeline(
                         lat=lat,
@@ -875,7 +946,7 @@ class PreviewRequestHandler(SimpleHTTPRequestHandler):
                     "case_study": {
                         "available": CASE_STUDY_REPORT_PATH.exists(),
                         "url": self._public_path(CASE_STUDY_REPORT_PATH) if CASE_STUDY_REPORT_PATH.exists() else None,
-                        "label": "Technical feasibility case study",
+                        "label": "Technical feasibility report",
                     },
                 },
                 "defaults": {

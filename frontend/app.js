@@ -70,6 +70,14 @@ const marker = L.marker([46.7712, 23.6236], { draggable: true }).addTo(map);
 function setCoordinates(lat, lon, options = {}) {
   const nextLat = Number(lat);
   const nextLon = Number(lon);
+  if (!Number.isFinite(nextLat) || !Number.isFinite(nextLon)) {
+    setStatus("Enter valid numeric latitude and longitude.", true);
+    return;
+  }
+  if (nextLat < -90 || nextLat > 90 || nextLon < -180 || nextLon > 180) {
+    setStatus("Latitude must be -90 to 90 and longitude must be -180 to 180.", true);
+    return;
+  }
   latInput.value = nextLat.toFixed(6);
   lonInput.value = nextLon.toFixed(6);
   marker.setLatLng([nextLat, nextLon]);
@@ -169,7 +177,7 @@ async function loadStatus() {
   setReportLink(
     caseStudyReportLink,
     payload.documents?.case_study,
-    "The feasibility case-study report will be available after processing."
+    "The feasibility report will be available after processing."
   );
 
   if (payload.has_preview && payload.preview_url) {
@@ -207,9 +215,35 @@ function readPayload() {
   };
 }
 
+function validatePayload(payload) {
+  if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lon)) {
+    throw new Error("Enter valid numeric latitude and longitude.");
+  }
+  if (payload.lat < -90 || payload.lat > 90 || payload.lon < -180 || payload.lon > 180) {
+    throw new Error("Latitude must be -90 to 90 and longitude must be -180 to 180.");
+  }
+  if (!Number.isFinite(payload.size_km) || payload.size_km <= 0) {
+    throw new Error("AOI size must be a positive number.");
+  }
+  if (
+    payload.water_risk &&
+    payload.water_risk_mode === "farm" &&
+    (!Number.isFinite(payload.farm_demand_m3_day) || payload.farm_demand_m3_day <= 0)
+  ) {
+    throw new Error("Farm demand must be greater than zero for farm risk mode.");
+  }
+}
+
 async function generatePreview(event) {
   event.preventDefault();
   const payload = readPayload();
+  try {
+    validatePayload(payload);
+  } catch (error) {
+    setStatus(error.message, true);
+    selectTab("map-panel");
+    return;
+  }
   syncSummary(payload);
 
   // Show loading state

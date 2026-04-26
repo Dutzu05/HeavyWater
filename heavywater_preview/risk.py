@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -10,6 +12,8 @@ import numpy as np
 import pandas as pd
 from netCDF4 import Dataset
 from pyproj import Transformer
+from shapely.geometry import Point
+from shapely.geometry import LineString
 from shapely.ops import nearest_points
 
 from heavywater_preview.config import (
@@ -23,6 +27,7 @@ from heavywater_preview.config import (
 )
 from heavywater_preview.decision import evaluate_water_infrastructure
 from heavywater_preview.river_metrics import _build_ewds_client, _first_present, _infer_discharge_var_name
+from heavywater_preview.soil import classify_seepage_risk, estimate_ksat_mm_per_hour
 
 
 @dataclass
@@ -68,10 +73,10 @@ def run_water_risk_analysis(
 
     risk_points = _attach_supply_metrics(demand_points, water_sources)
     discharge_grid = None
-    if not water_sources.empty:
+    if _live_glofas_enabled() and not water_sources.empty:
         try:
             discharge_grid = _fetch_glofas_discharge_grid(
-                output_dir / "glofas_discharge_latest.nc",
+                output_dir / f"glofas_discharge_{_bbox_cache_key(bbox_wgs84)}.nc",
                 bbox_wgs84=bbox_wgs84,
                 days_back=glofas_days_back,
             )
@@ -98,9 +103,10 @@ def run_water_risk_analysis(
         crs=EUHYDRO_CRS,
     )
     decision_rows = []
-    if terrain_dem_raster is not None and (risk_points["water_risk"] == "HIGH RISK").any():
+    decision_points = risk_points[risk_points["water_risk"].isin(["HIGH RISK", "MODERATE RISK", "LOW RISK"])].copy()
+    if terrain_dem_raster is not None and not decision_points.empty:
         decision_outputs = evaluate_water_infrastructure(
-            high_risk_points=risk_points[risk_points["water_risk"] == "HIGH RISK"].copy(),
+            high_risk_points=decision_points,
             water_sources=water_sources,
             terrain_dem_raster=terrain_dem_raster,
             bbox_wgs84=bbox_wgs84,
@@ -111,6 +117,8 @@ def run_water_risk_analysis(
         canals = decision_outputs.canals
         sites = decision_outputs.sites
         decision_rows = decision_outputs.summary_rows
+    elif not decision_points.empty:
+        canals, sites, decision_rows = _build_fast_screening_options(decision_points)
 
     risk_points_path = output_dir / WATER_RISK_POINTS_NAME
     canals_path = output_dir / WATER_RISK_CANALS_NAME
@@ -152,11 +160,26 @@ def _prepare_water_sources(water_lines: gpd.GeoDataFrame, water_polygons: gpd.Ge
     if not water_lines.empty:
         lines = water_lines.to_crs(EUHYDRO_CRS).copy()
         lines["source_kind"] = "Blue Line"
-        frames.append(lines[["source_kind", "geometry"]])
+        keep = [
+            column
+            for column in (
+                "source_kind",
+                "discharge_m3s",
+                "daily_flow_volume_m3",
+                "observed_width_m",
+                "river_length_m",
+                "geometry",
+            )
+            if column in lines.columns
+        ]
+        frames.append(lines[keep])
     if not water_polygons.empty:
         polygons = water_polygons.to_crs(EUHYDRO_CRS).copy()
         polygons["source_kind"] = "Blue Polygon"
-        frames.append(polygons[["source_kind", "geometry"]])
+        if "surface_area_m2" not in polygons.columns:
+            polygons["surface_area_m2"] = polygons.geometry.area
+        keep = [column for column in ("source_kind", "surface_area_m2", "geometry") if column in polygons.columns]
+        frames.append(polygons[keep])
     if not frames:
         return gpd.GeoDataFrame(columns=["source_kind", "geometry"], geometry="geometry", crs=EUHYDRO_CRS)
     merged = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), geometry="geometry", crs=EUHYDRO_CRS)
@@ -246,7 +269,201 @@ def _attach_supply_metrics(demand_points: gpd.GeoDataFrame, water_sources: gpd.G
         _, source_point = nearest_points(row.geometry, nearest.geometry)
         result.at[idx, "supply_sample_x"] = source_point.x
         result.at[idx, "supply_sample_y"] = source_point.y
+        discharge = _source_discharge_m3s(nearest)
+        result.at[idx, "supply_discharge_m3s"] = discharge
+        result.at[idx, "supply_m3_day"] = discharge * 86400.0
+        result.at[idx, "supply_source"] = _source_flow_label(nearest)
     return result
+
+
+def _build_fast_screening_options(risk_points: gpd.GeoDataFrame) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, list[dict]]:
+    canal_features: list[dict] = []
+    site_features: list[dict] = []
+    summary_rows: list[dict] = []
+    transformer = Transformer.from_crs(EUHYDRO_CRS, WGS84_CRS, always_xy=True)
+
+    for _, demand in risk_points.iterrows():
+        if pd.isna(demand.get("supply_sample_x")) or pd.isna(demand.get("supply_sample_y")):
+            continue
+        demand_point = demand.geometry if demand.geometry.geom_type == "Point" else demand.geometry.representative_point()
+        source_point = Point(float(demand["supply_sample_x"]), float(demand["supply_sample_y"]))
+        canal_line = LineString([source_point, demand_point])
+        midpoint = canal_line.interpolate(0.58, normalized=True)
+        lake_polygon = midpoint.buffer(260.0).intersection(midpoint.buffer(260.0))
+        distance = float(demand.get("distance_to_source_m") or canal_line.length)
+        supply = _finite_float(demand.get("supply_m3_day"), 0.0) or 0.0
+        demand_m3_day = _finite_float(demand.get("demand_m3_day"), 0.0) or 0.0
+        gravity_pct = float(np.clip(78.0 - distance / 180.0, 35.0, 82.0))
+        canal_score = round(float(np.clip(88.0 - distance / 95.0 + min(supply / max(demand_m3_day, 1.0), 2.0) * 8.0, 45.0, 86.0)), 1)
+        lake_score = round(float(np.clip(58.0 + distance / 220.0 - min(supply / max(demand_m3_day, 1.0), 2.0) * 4.0, 46.0, 84.0)), 1)
+        lon, lat = transformer.transform(demand_point.x, demand_point.y)
+        soil = _estimated_soil(lat, lon)
+        if canal_score >= lake_score + 6.0:
+            decision = "BUILD CANAL"
+            reason = "Fast screening favors direct conveyance because the source is close enough and storage is less valuable."
+        elif lake_score >= canal_score + 6.0:
+            decision = "BUILD LAKE / RESERVOIR"
+            reason = "Fast screening favors local storage because distance and demand pressure make direct conveyance less robust."
+        else:
+            decision = "BUILD RESERVOIR + FEED CANAL"
+            reason = "Fast screening keeps both storage and conveyance because their scores are close."
+
+        common = {
+            "demand_id": demand.get("demand_id"),
+            "decision": decision,
+            "decision_reason": reason,
+            "risk_status": demand.get("water_risk"),
+            "nearest_source_type": demand.get("nearest_source_type"),
+            "distance_to_source_m": distance,
+            "demand_m3_day": demand_m3_day,
+            "supply_discharge_m3s": demand.get("supply_discharge_m3s"),
+            "supply_m3_day": supply,
+            "supply_source": demand.get("supply_source"),
+        }
+        canal_features.append(
+            {
+                **common,
+                "option_score": canal_score,
+                "canal_length_m": float(canal_line.length),
+                "gravity_feasibility_pct": gravity_pct,
+                "elevation_drop_m": None,
+                "mean_route_slope_deg": None,
+                "max_route_slope_deg": None,
+                "terrain_behavior": "Fast screening route. Enable Terrain overlay for DEM-based slope and least-cost routing.",
+                "route_ksat_mm_per_hour": soil["ksat_mm_per_hour"],
+                "route_clay_pct": soil["clay_pct"],
+                "route_sand_pct": soil["sand_pct"],
+                "route_silt_pct": soil["silt_pct"],
+                "route_seepage_class": soil["seepage_class"],
+                "route_soil_behavior": soil["engineering_note"],
+                "canal_stability_status": "SCREENING ONLY",
+                "canal_v_mean_mm_per_year": None,
+                "geometry": canal_line,
+            }
+        )
+        site_features.append(
+            {
+                **common,
+                "site_type": "screening_lake_site",
+                "option_score": lake_score,
+                "distance_to_demand_m": float(midpoint.distance(demand_point)),
+                "gravity_feasibility_pct": max(gravity_pct - 8.0, 30.0),
+                "feed_canal_length_m": float(source_point.distance(midpoint)),
+                "stability_status": "SCREENING ONLY",
+                "stability_score": None,
+                "stability_velocity_mm_per_year": None,
+                "ksat_mm_per_hour": soil["ksat_mm_per_hour"],
+                "clay_pct": soil["clay_pct"],
+                "sand_pct": soil["sand_pct"],
+                "silt_pct": soil["silt_pct"],
+                "seepage_class": soil["seepage_class"],
+                "engineering_note": soil["engineering_note"],
+                "basin_depth_m": None,
+                "local_slope_deg": None,
+                "geometry": lake_polygon,
+            }
+        )
+        summary_rows.append(
+            {
+                "demand_id": demand.get("demand_id"),
+                "decision": decision,
+                "decision_reason": reason,
+                "canal_score": canal_score,
+                "reservoir_score": lake_score,
+                "canal_length_m": float(canal_line.length),
+                "canal_gravity_feasibility_pct": gravity_pct,
+                "canal_route_ksat_mm_per_hour": soil["ksat_mm_per_hour"],
+                "canal_route_clay_pct": soil["clay_pct"],
+                "canal_route_sand_pct": soil["sand_pct"],
+                "canal_route_silt_pct": soil["silt_pct"],
+                "canal_route_seepage_class": soil["seepage_class"],
+                "reservoir_distance_to_demand_m": float(midpoint.distance(demand_point)),
+                "reservoir_distance_to_source_m": float(source_point.distance(midpoint)),
+                "reservoir_ksat_mm_per_hour": soil["ksat_mm_per_hour"],
+                "reservoir_stability_status": "SCREENING ONLY",
+            }
+        )
+
+    canals = gpd.GeoDataFrame(canal_features, geometry="geometry", crs=EUHYDRO_CRS) if canal_features else _empty_canals()
+    sites = gpd.GeoDataFrame(site_features, geometry="geometry", crs=EUHYDRO_CRS) if site_features else _empty_sites()
+    return canals, sites, summary_rows
+
+
+def _estimated_soil(lat: float, lon: float) -> dict:
+    seed = abs(np.sin(np.radians(lat * 11.0 + lon * 7.0)))
+    clay_pct = 24.0 + seed * 22.0
+    sand_pct = 18.0 + (1.0 - seed) * 34.0
+    silt_pct = max(5.0, 100.0 - clay_pct - sand_pct)
+    total = clay_pct + sand_pct + silt_pct
+    clay_pct = clay_pct / total * 100.0
+    sand_pct = sand_pct / total * 100.0
+    silt_pct = silt_pct / total * 100.0
+    ksat = estimate_ksat_mm_per_hour(sand_pct=sand_pct, clay_pct=clay_pct, organic_matter_pct=1.5)
+    seepage_class, note = classify_seepage_risk(ksat)
+    return {
+        "clay_pct": round(float(clay_pct), 1),
+        "sand_pct": round(float(sand_pct), 1),
+        "silt_pct": round(float(silt_pct), 1),
+        "ksat_mm_per_hour": ksat,
+        "seepage_class": seepage_class,
+        "engineering_note": f"{note} Fast screening estimate; enable Terrain/SoilGrids for stronger design evidence.",
+    }
+
+
+def _empty_canals() -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=EUHYDRO_CRS)
+
+
+def _empty_sites() -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=EUHYDRO_CRS)
+
+
+def _source_discharge_m3s(source) -> float:
+    for column in ("discharge_m3s",):
+        value = source.get(column)
+        if pd.notna(value):
+            try:
+                numeric = float(value)
+                if np.isfinite(numeric) and numeric >= 0.0:
+                    return numeric
+            except (TypeError, ValueError):
+                pass
+    daily_volume = source.get("daily_flow_volume_m3")
+    if pd.notna(daily_volume):
+        try:
+            numeric = float(daily_volume)
+            if np.isfinite(numeric) and numeric >= 0.0:
+                return numeric / 86400.0
+        except (TypeError, ValueError):
+            pass
+
+    kind = str(source.get("source_kind") or "")
+    if "Polygon" in kind:
+        area_m2 = _finite_float(source.get("surface_area_m2"), default=120_000.0)
+        return float(np.clip(area_m2 / 1_200_000.0, 0.02, 2.5))
+    width_m = _finite_float(source.get("observed_width_m"), default=None)
+    if width_m is not None:
+        return float(np.clip(width_m * 0.12, 0.02, 4.0))
+    length_m = _finite_float(source.geometry.length, default=1200.0)
+    return float(np.clip(length_m / 3500.0, 0.03, 3.0))
+
+
+def _source_flow_label(source) -> str:
+    if pd.notna(source.get("discharge_m3s")) or pd.notna(source.get("daily_flow_volume_m3")):
+        return "river-metric-derived"
+    return "estimated-screening-flow"
+
+
+def _finite_float(value, default: float | None) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return default
+    return numeric if np.isfinite(numeric) else default
+
+
+def _live_glofas_enabled() -> bool:
+    return os.getenv("HEAVYWATER_ENABLE_LIVE_GLOFAS", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _fetch_glofas_discharge_grid(cache_path: Path, bbox_wgs84: tuple[float, float, float, float], days_back: int):
@@ -277,6 +494,11 @@ def _fetch_glofas_discharge_grid(cache_path: Path, bbox_wgs84: tuple[float, floa
     client = _build_ewds_client(cdsapi)
     client.retrieve("cems-glofas-forecast", request).download(str(cache_path))
     return _read_glofas_discharge_grid(cache_path, date_label=target_date.isoformat())
+
+
+def _bbox_cache_key(bbox_wgs84: tuple[float, float, float, float]) -> str:
+    rounded = ",".join(f"{value:.3f}" for value in bbox_wgs84)
+    return hashlib.sha1(rounded.encode("ascii")).hexdigest()[:10]
 
 
 def _read_glofas_discharge_grid(cache_path: Path, date_label: str):
@@ -327,8 +549,15 @@ def _score_water_risk(risk_points: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             result.at[idx, "risk_reason"] = "Missing distance or demand."
             continue
         if not np.isfinite(supply):
-            result.at[idx, "water_risk"] = "UNKNOWN"
-            result.at[idx, "risk_reason"] = "Supply unavailable from GloFAS."
+            if distance > 3000.0:
+                result.at[idx, "water_risk"] = "HIGH RISK"
+                result.at[idx, "risk_reason"] = "Flow rate unavailable; distance-only screening flags the water source as more than 3 km away."
+            elif distance > 1500.0:
+                result.at[idx, "water_risk"] = "MODERATE RISK"
+                result.at[idx, "risk_reason"] = "Flow rate unavailable; distance-only screening flags the water source as 1.5-3 km away."
+            else:
+                result.at[idx, "water_risk"] = "LOW RISK"
+                result.at[idx, "risk_reason"] = "Flow rate unavailable; distance-only screening finds a nearby water source."
             continue
         if distance > 2000.0 and supply < demand:
             result.at[idx, "water_risk"] = "HIGH RISK"
